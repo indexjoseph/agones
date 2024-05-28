@@ -21,6 +21,8 @@ spec:
     - name: default
       portPolicy: Dynamic
       containerPort: 7654
+      hostPort: 7777
+      range: 0000-9999
   template:
     spec:
       containers:
