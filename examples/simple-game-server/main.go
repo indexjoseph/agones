@@ -454,7 +454,7 @@ func udpReadWriteLoop(conn net.PacketConn, cancel context.CancelFunc, s *sdk.SDK
 		if err != nil {
 			response = "ERROR: " + response + "\n"
 		} else if addACK {
-			response = "ACK: " + response + "\n"
+			response = "ACK Echo says: " + response + "\n"
 		}
 
 		udpRespond(conn, sender, response)
