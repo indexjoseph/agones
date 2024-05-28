@@ -506,7 +506,7 @@ func tcpHandleCommand(conn net.Conn, txt string, s *sdk.SDK, cancel context.Canc
 	if err != nil {
 		response = "ERROR: " + response + "\n"
 	} else if addACK {
-		response = "ACK TCP: " + response + "\n"
+		response = "ACK TCP Echo Says: " + response + "\n"
 	}
 
 	tcpRespond(conn, response)
