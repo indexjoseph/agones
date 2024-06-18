@@ -103,6 +103,10 @@ spec:
       - name: agones-controller
         image: "{{ .Values.agones.image.registry }}/{{ .Values.agones.image.controller.name}}:{{ default .Values.agones.image.tag .Values.agones.image.controller.tag }}"
         imagePullPolicy: {{ .Values.agones.image.controller.pullPolicy }}
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
         env:
         # minimum port that can be exposed to GameServer traffic
         - name: MIN_PORT
@@ -130,6 +134,8 @@ spec:
           value: {{ .Values.agones.image.sdk.memoryRequest | quote }}
         - name: SIDECAR_MEMORY_LIMIT
           value: {{ .Values.agones.image.sdk.memoryLimit | quote }}
+        - name: SIDECAR_RUN_AS_USER
+          value: "1000"
         - name: SDK_SERVICE_ACCOUNT
           value: {{ .Values.agones.serviceaccount.sdk.name | quote }}
         - name: PROMETHEUS_EXPORTER
