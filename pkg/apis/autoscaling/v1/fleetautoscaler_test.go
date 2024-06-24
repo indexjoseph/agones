@@ -496,8 +496,7 @@ func TestFleetAutoscalerChainValidateUpdate(t *testing.T) {
 		"invalid nested policy": {
 			fas: modifiedFAS(func(fap *FleetAutoscalerPolicy) {
 				fap.Chain.Items[0].Policy.Buffer.MinReplicas = 20
-			}
-			),
+			}),
 			featureFlags: string(runtime.FeatureScheduledAutoscaler) + "=true",
 			wantLength:   1,
 			wantField:    "spec.policy.chain.items[0].policy.buffer.minReplicas",

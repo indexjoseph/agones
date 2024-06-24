@@ -126,7 +126,7 @@ const (
 	// ListPolicyType is for List based fleet autoscaling
 	// nolint:revive // Linter contains comment doesn't start with ListPolicyType
 	ListPolicyType FleetAutoscalerPolicyType = "List"
-	// [Stage:Beta]
+	// [Stage:Alpha]
 	// [FeatureFlag:ScheduledAutoscaler]
 	// ChainPolicyType is for Chain based fleet autoscaling
 	// nolint:revive // Linter contains comment doesn't start with ChainPolicyType
@@ -211,62 +211,51 @@ type ListPolicy struct {
 // Between defines the time period that the policy is eligible to be applied.
 type Between struct {
 	// Start is the datetime that the policy is eligible to be applied.
-	// If not set, the policy is always eligible to be applied
-	// as soon as possible. If the datetime is in the past, the policy is
-	// immediately eligible to be applied as well.
-	// Optional field.
+	// If not set or if the datetime is in the past, the policy is eligible to be applied
+	// as soon as possible.
 	Start string `json:"start"`
 
 	// End is the datetime that the policy is no longer eligible to be applied.
-	// If not set, the policy is always eligible to be applied.
-	// after the start time. Optional field.
+	// If not set, the policy is always eligible to be applied, after the start time. Optional field.
 	End string `json:"end"`
 }
 
 // ActivePeriod defines the time period that the policy is applied.
 type ActivePeriod struct {
 	// StartCron defines when the policy should be applied.
-	// If not set, the policy is always eligible to be applied.
-	// This must conform to UNIX cron syntax.
-	// Optional field.
+	// If not set, the policy is always to be applied within the start and end time.
+	// This field must conform to UNIX cron syntax. Optional field.
 	StartCron string `json:"startCron"`
 
 	// Duration is the length of time that the policy is applied.
 	// If not set, the duration is indefinite.
 	// A duration string is a possibly signed sequence of decimal numbers,
 	// (e.g. "300ms", "-1.5h" or "2h45m").
-	// Valid time units are "ns", "us" (or "µs"), "ms", "s", "m", "h".
-	// Optional field.
+	// Valid time units are "ns", "us" (or "µs"), "ms", "s", "m", "h". Optional field.
 	Duration string `json:"duration"`
 }
 
 // Schedule defines when the policy should be applied.
 type Schedule struct {
-	// Timezone is the timezone that the schedule is in.
-	// If not set, the schedule is in the UTC timezone.
-	// Optional field.
+	// Timezone is the timezone that the schedule is in. If not set, the schedule is in the UTC timezone. Optional field.
 	Timezone string `json:"timezone"`
 
-	// Between defines the time period that the policy is eligible to be applied.
-	// Optional field.
+	// Between defines the time period that the policy is eligible to be applied. Optional field.
 	Between Between `json:"between"`
 
-	// ActivePeriod defines the time period that the policy is applied.
-	// Optional field.
+	// ActivePeriod defines the time period that the policy is applied. Optional field.
 	ActivePeriod ActivePeriod `json:"activePeriod"`
 }
 
 // ChainEntry defines a single entry in the ChainPolicy.
 type ChainEntry struct {
-	// UID is the unique identifier of the ChainEntry.
+	// UID is the unique identifier of the ChainEntry. Optional field.
 	UID types.UID `json:"uid"`
 
-	// Schedule defines when the policy should be applied.
-	// Optional field.
+	// Schedule defines when the policy should be applied. Optional field.
 	Schedule Schedule `json:"schedule"`
 
-	// Policy is the name of the policy to be applied.
-	// Required field.
+	// Policy is the name of the policy to be applied. Required field.
 	Policy FleetAutoscalerPolicy `json:"policy"`
 }
 
@@ -365,6 +354,9 @@ func (f *FleetAutoscalerPolicy) ValidatePolicy(fldPath *field.Path) field.ErrorL
 
 	case ListPolicyType:
 		allErrs = f.List.ValidateListPolicy(fldPath.Child("list"))
+
+	case ChainPolicyType:
+		allErrs = f.Chain.ValidateChainPolicy(fldPath.Child("chain"))
 	}
 	return allErrs
 }
@@ -517,7 +509,7 @@ func (l *ListPolicy) ValidateListPolicy(fldPath *field.Path) field.ErrorList {
 func (c *ChainPolicy) ValidateChainPolicy(fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 	if !runtime.FeatureEnabled(runtime.FeatureScheduledAutoscaler) {
-		return append(allErrs, field.Forbidden(fldPath, "feature ChainFleetAutoscaler must be enabled"))
+		return append(allErrs, field.Forbidden(fldPath, "feature ScheduledAutoscaler must be enabled"))
 	}
 	for i, entry := range c.Items {
 		// Validate that the chain entry has a policy
@@ -534,7 +526,7 @@ func (c *ChainPolicy) ValidateChainPolicy(fldPath *field.Path) field.ErrorList {
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("items").Index(i).Child("schedule").Child("timezone"), entry.Schedule.Timezone, "timezone is not a valid timezone"))
 		}
 		if entry.Schedule.Between.Start != "" {
-			// If the start time is not a valid RFC3339 or ISO8601 formatted datetime, add an error
+			// If the start time is not a valid RFC3339 or ISO8601 formatted datetime, append an error
 			if _, err := time.Parse(time.RFC3339, entry.Schedule.Between.Start); err != nil {
 				if _, err := iso8601.ParseString(entry.Schedule.Between.Start); err != nil {
 					allErrs = append(allErrs, field.Invalid(fldPath.Child("items").Index(i).Child("schedule").Child("between").Child("start"), entry.Schedule.Between.Start, "start must be a valid RFC3339 or ISO8601 formatted datetime"))
@@ -542,7 +534,7 @@ func (c *ChainPolicy) ValidateChainPolicy(fldPath *field.Path) field.ErrorList {
 			}
 		}
 		if entry.Schedule.Between.End != "" {
-			// If the end time is not a valid RFC3339 or ISO8601 formatted datetime, add an error
+			// If the end time is not a valid RFC3339 or ISO8601 formatted datetime, append an error
 			if _, err := time.Parse(time.RFC3339, entry.Schedule.Between.End); err != nil {
 				if _, err := iso8601.ParseString(entry.Schedule.Between.End); err != nil {
 					allErrs = append(allErrs, field.Invalid(fldPath.Child("items").Index(i).Child("schedule").Child("between").Child("end"), entry.Schedule.Between.End, "end must be a valid RFC3339 or ISO8601 formatted datetime"))
@@ -550,13 +542,13 @@ func (c *ChainPolicy) ValidateChainPolicy(fldPath *field.Path) field.ErrorList {
 			}
 		}
 		if entry.Schedule.ActivePeriod.StartCron != "" {
-			// If the startCron is not a valid cron expression, add an error
+			// If the startCron is not a valid cron expression, append an error
 			if _, err := cron.ParseStandard(entry.Schedule.ActivePeriod.StartCron); err != nil {
 				allErrs = append(allErrs, field.Invalid(fldPath.Child("items").Index(i).Child("schedule").Child("activePeriod").Child("startCron"), entry.Schedule.ActivePeriod.StartCron, "startCron is not a valid cron expression"))
 			}
 		}
 		if entry.Schedule.ActivePeriod.Duration != "" {
-			// If the duration is not a valid golang duration, add an error
+			// If the duration is not a valid golang duration, append an error
 			if _, err := time.ParseDuration(entry.Schedule.ActivePeriod.Duration); err != nil {
 				allErrs = append(allErrs, field.Invalid(fldPath.Child("items").Index(i).Child("schedule").Child("activePeriod").Child("duration"), entry.Schedule.ActivePeriod.Duration, "duration is not a valid duration"))
 			}

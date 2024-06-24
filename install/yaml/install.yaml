@@ -5777,26 +5777,26 @@ spec:
                           required:
                             - policy
                           properties:
-                            id: # The id of a chain entry
+                            uid: # The uid of a chain entry.
                               type: string
-                            schedule:
+                            schedule: # Defines when a policy should be applied.
                               type: object
                               properties:
-                                timezone: # Timezone to be used for the between period and active period.
+                                timezone: # Timezone to be used for the between period and active period. If not specified, UTC is used by default.
                                   type: string
-                                between:
+                                between: # Between defines when a policy is eligible to be applied/become active.
                                   type: object
-                                  start:
+                                  start:  # Start is a datetime field that defines when a policy becomes eligible to be applied.If not set or if the datetime is in the past, the policy is eligible to be applied (within the active period) as soon as possible.
                                     type: string
-                                  end:
+                                  end: # End is a dateime field that defines when a policy is no longer eligible to be applied. If not set, the policy is always eligible to be applied, after the start time.
                                     type: string
                                 activePeriod:
                                   type: object
-                                  startCron: # Cron expression defining the start time
+                                  startCron: # Cron expression defining the start time of the active period. If not set, the policy is always to be applied within the start and end time. This field must conform to UNIX cron syntax.
                                     type: string
-                                  duration: # The length of time the policy should be applied for
+                                  duration: # The length of time the policy should be applied for. If not set, the duration is indefinite. A duration string is a possibly signed sequence of decimal numbers (e.g. "300ms", "-1.5h" or "2h45m").
                                     type: string
-                            policy:
+                            policy: # Policy is the policy to be applied during the active period. Required field.
                               type: object
                               required:
                                 - type
