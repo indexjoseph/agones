@@ -669,7 +669,6 @@ func customFixture(t FleetAutoscalerPolicyType) *FleetAutoscaler {
 			BufferSize:  intstr.FromInt(5),
 			MaxCapacity: 10,
 		}
-
 	case ChainPolicyType:
 		res.Spec.Policy.Type = ChainPolicyType
 		res.Spec.Policy.Buffer = nil
