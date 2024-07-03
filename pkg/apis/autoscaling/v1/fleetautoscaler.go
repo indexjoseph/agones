@@ -262,8 +262,6 @@ type ChainEntry struct {
 
 // ChainPolicy controls the desired behavior of the Chain autoscaler policy.
 type ChainPolicy struct {
-	metav1.TypeMeta `json:",inline"`
-
 	// Items is a list of ChainEntry objects
 	Items []ChainEntry `json:"items"`
 }
