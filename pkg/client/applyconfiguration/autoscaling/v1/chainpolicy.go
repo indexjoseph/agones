@@ -18,40 +18,16 @@
 
 package v1
 
-import (
-	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
-)
-
 // ChainPolicyApplyConfiguration represents an declarative configuration of the ChainPolicy type for use
 // with apply.
 type ChainPolicyApplyConfiguration struct {
-	v1.TypeMetaApplyConfiguration `json:",inline"`
-	Items                         []ChainEntryApplyConfiguration `json:"items,omitempty"`
+	Items []ChainEntryApplyConfiguration `json:"items,omitempty"`
 }
 
 // ChainPolicyApplyConfiguration constructs an declarative configuration of the ChainPolicy type for use with
 // apply.
 func ChainPolicy() *ChainPolicyApplyConfiguration {
-	b := &ChainPolicyApplyConfiguration{}
-	b.WithKind("ChainPolicy")
-	b.WithAPIVersion("autoscaling.agones.dev/v1")
-	return b
-}
-
-// WithKind sets the Kind field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the Kind field is set to the value of the last call.
-func (b *ChainPolicyApplyConfiguration) WithKind(value string) *ChainPolicyApplyConfiguration {
-	b.Kind = &value
-	return b
-}
-
-// WithAPIVersion sets the APIVersion field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the APIVersion field is set to the value of the last call.
-func (b *ChainPolicyApplyConfiguration) WithAPIVersion(value string) *ChainPolicyApplyConfiguration {
-	b.APIVersion = &value
-	return b
+	return &ChainPolicyApplyConfiguration{}
 }
 
 // WithItems adds the given value to the Items field in the declarative configuration
