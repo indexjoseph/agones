@@ -68,7 +68,7 @@ func VendorEnabled(ctx context.Context, inv Invocation, r *Runner) (bool, *Modul
 	}
 	// Check 1.14's automatic vendor mode.
 	if fi, err := os.Stat(filepath.Join(mainMod.Dir, "vendor")); err == nil && fi.IsDir() {
-		if mainMod.GoVersion != "" && semver.Compare("v"+mainMod.GoVersion, "v1.12") >= 0 {
+		if mainMod.GoVersion != "" && semver.Compare("v"+mainMod.GoVersion, "v1.14") >= 0 {
 			// The Go version is at least 1.14, and a vendor directory exists.
 			// Set -mod=vendor by default.
 			return true, mainMod, nil
