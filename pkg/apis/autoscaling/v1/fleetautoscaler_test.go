@@ -518,11 +518,11 @@ func TestFleetAutoscalerChainValidateUpdate(t *testing.T) {
 		},
 		"invalid time zone": {
 			fas: modifiedFAS(func(fap *FleetAutoscalerPolicy) {
-				fap.Chain.Items[2].Schedule.Timezone = "invalid-timezone"
+				fap.Chain.Items[2].Schedule.ActivePeriod.Timezone = "invalid-timezone"
 			}),
 			featureFlags: string(runtime.FeatureScheduledAutoscaler) + "=true",
 			wantLength:   1,
-			wantField:    "spec.policy.chain.items[2].schedule.timezone",
+			wantField:    "spec.policy.chain.items[2].schedule.activePeriod.timezone",
 		},
 		"invalid start time": {
 			fas: modifiedFAS(func(fap *FleetAutoscalerPolicy) {
@@ -677,12 +677,12 @@ func customFixture(t FleetAutoscalerPolicyType) *FleetAutoscaler {
 				{
 					UID: "weekdays",
 					Schedule: Schedule{
-						Timezone: "",
 						Between: Between{
-							Start: "2024-07-01T15:59:59",
-							End:   "2024-07-03T15:59:59",
+							Start: "2024-07-01T15:59:59Z",
+							End:   "2024-07-03T15:59:59Z",
 						},
 						ActivePeriod: ActivePeriod{
+							Timezone:  "",
 							StartCron: "0 8 * * 1-5",
 							Duration:  "10h",
 						},
@@ -698,12 +698,12 @@ func customFixture(t FleetAutoscalerPolicyType) *FleetAutoscaler {
 				{
 					UID: "weekends",
 					Schedule: Schedule{
-						Timezone: "",
 						Between: Between{
-							Start: "2024-07-04T15:59:59",
-							End:   "2024-07-05T15:59:59",
+							Start: "2024-07-04T15:59:59Z",
+							End:   "2024-07-05T15:59:59Z",
 						},
 						ActivePeriod: ActivePeriod{
+							Timezone:  "",
 							StartCron: "0 8 * * *",
 							Duration:  "10h",
 						},
@@ -720,12 +720,12 @@ func customFixture(t FleetAutoscalerPolicyType) *FleetAutoscaler {
 				{
 					UID: "holidays",
 					Schedule: Schedule{
-						Timezone: "",
 						Between: Between{
-							Start: "2024-07-05T15:59:59",
-							End:   "1990-12-31T15:59:59",
+							Start: "2024-07-05T15:59:59Z",
+							End:   "1990-12-31T15:59:59Z",
 						},
 						ActivePeriod: ActivePeriod{
+							Timezone:  "",
 							StartCron: "0 8 * * *",
 							Duration:  "10h",
 						},
