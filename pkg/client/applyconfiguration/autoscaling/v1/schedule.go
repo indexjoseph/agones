@@ -21,7 +21,6 @@ package v1
 // ScheduleApplyConfiguration represents an declarative configuration of the Schedule type for use
 // with apply.
 type ScheduleApplyConfiguration struct {
-	Timezone     *string                         `json:"timezone,omitempty"`
 	Between      *BetweenApplyConfiguration      `json:"between,omitempty"`
 	ActivePeriod *ActivePeriodApplyConfiguration `json:"activePeriod,omitempty"`
 }
@@ -30,14 +29,6 @@ type ScheduleApplyConfiguration struct {
 // apply.
 func Schedule() *ScheduleApplyConfiguration {
 	return &ScheduleApplyConfiguration{}
-}
-
-// WithTimezone sets the Timezone field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the Timezone field is set to the value of the last call.
-func (b *ScheduleApplyConfiguration) WithTimezone(value string) *ScheduleApplyConfiguration {
-	b.Timezone = &value
-	return b
 }
 
 // WithBetween sets the Between field in the declarative configuration to the given value

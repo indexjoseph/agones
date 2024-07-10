@@ -217,17 +217,17 @@ type Between struct {
 	Start string `json:"start"`
 
 	// End is the datetime that the policy is no longer eligible to be applied.
-	// This field must conform to RFC3339 format. If not set, the policy is always eligible to be applied, after the start time above. Optional field.
+	// This field must conform to RFC3339 format. If not set, the policy is always eligible to be applied, after the start time above.
 	End string `json:"end"`
 }
 
 // ActivePeriod defines the time period that the policy is applied.
 type ActivePeriod struct {
-	// Timezone to be used for the startCron field. Optional. If not set, startCron is defaulted to the UTC timezone. Optional field.
+	// Timezone to be used for the startCron field. If not set, startCron is defaulted to the UTC timezone.
 	Timezone string `json:"timezone"`
 	// StartCron defines when the policy should be applied.
 	// If not set, the policy is always to be applied within the start and end time.
-	// This field must conform to UNIX cron syntax. Optional field.
+	// This field must conform to UNIX cron syntax.
 	StartCron string `json:"startCron"`
 
 	// Duration is the length of time that the policy is applied.
@@ -235,25 +235,25 @@ type ActivePeriod struct {
 	// A duration string is a possibly signed sequence of decimal numbers,
 	// (e.g. "300ms", "-1.5h" or "2h45m").
 	// The representation limits the largest representable duration to approximately 290 years.
-	// Valid time units are "ns", "us" (or "µs"), "ms", "s", "m", "h". Optional field.
+	// Valid time units are "ns", "us" (or "µs"), "ms", "s", "m", "h".
 	Duration string `json:"duration"`
 }
 
 // Schedule defines when the policy should be applied.
 type Schedule struct {
-	// Between defines the time period that the policy is eligible to be applied. Optional field.
+	// Between defines the time period that the policy is eligible to be applied.
 	Between Between `json:"between"`
 
-	// ActivePeriod defines the time period that the policy is applied. Optional field.
+	// ActivePeriod defines the time period that the policy is applied.
 	ActivePeriod ActivePeriod `json:"activePeriod"`
 }
 
 // ChainEntry defines a single entry in the ChainPolicy.
 type ChainEntry struct {
-	// UID is the unique identifier for a ChainEntry. If not set the identifier will be set to the index of chain entry. Optional field.
+	// UID is the unique identifier for a ChainEntry. If not set the identifier will be set to the index of chain entry.
 	UID types.UID `json:"uid"`
 
-	// Schedule defines when the policy is applied. Optional field.
+	// Schedule defines when the policy is applied.
 	Schedule Schedule `json:"schedule"`
 
 	// Policy is the name of the policy to be applied. Required field.
@@ -262,10 +262,7 @@ type ChainEntry struct {
 
 // ChainPolicy controls the desired behavior of the Chain autoscaler policy.
 type ChainPolicy struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-
-	// Items is a list of ChainEntry objects
+	// Items is a list of ChainEntry objects.
 	Items []ChainEntry `json:"items"`
 }
 
