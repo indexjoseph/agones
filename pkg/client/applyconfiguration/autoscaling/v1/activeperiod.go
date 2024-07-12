@@ -21,6 +21,7 @@ package v1
 // ActivePeriodApplyConfiguration represents an declarative configuration of the ActivePeriod type for use
 // with apply.
 type ActivePeriodApplyConfiguration struct {
+	Timezone  *string `json:"timezone,omitempty"`
 	StartCron *string `json:"startCron,omitempty"`
 	Duration  *string `json:"duration,omitempty"`
 }
@@ -29,6 +30,14 @@ type ActivePeriodApplyConfiguration struct {
 // apply.
 func ActivePeriod() *ActivePeriodApplyConfiguration {
 	return &ActivePeriodApplyConfiguration{}
+}
+
+// WithTimezone sets the Timezone field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Timezone field is set to the value of the last call.
+func (b *ActivePeriodApplyConfiguration) WithTimezone(value string) *ActivePeriodApplyConfiguration {
+	b.Timezone = &value
+	return b
 }
 
 // WithStartCron sets the StartCron field in the declarative configuration to the given value
