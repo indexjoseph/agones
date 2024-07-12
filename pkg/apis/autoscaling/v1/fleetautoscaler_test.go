@@ -479,7 +479,7 @@ func TestFleetAutoscalerChainValidateUpdate(t *testing.T) {
 		},
 		"duplicate id": {
 			fas: modifiedFAS(func(fap *FleetAutoscalerPolicy) {
-				fap.Chain.Items[2].Id = "weekdays"
+				fap.Chain.Items[2].ID = "weekdays"
 			}),
 			featureFlags: string(runtime.FeatureScheduledAutoscaler) + "=true",
 			wantLength:   2,
@@ -683,7 +683,7 @@ func customFixture(t FleetAutoscalerPolicyType) *FleetAutoscaler {
 		res.Spec.Policy.Chain = &ChainPolicy{
 			Items: []ChainEntry{
 				{
-					Id: "weekdays",
+					ID: "weekdays",
 					Schedule: Schedule{
 						Between: Between{
 							Start: "2024-07-01T15:59:59Z",
@@ -704,7 +704,7 @@ func customFixture(t FleetAutoscalerPolicyType) *FleetAutoscaler {
 					},
 				},
 				{
-					Id: "weekends",
+					ID: "weekends",
 					Schedule: Schedule{
 						Between: Between{
 							Start: "2024-07-04T15:59:59Z",
@@ -726,7 +726,7 @@ func customFixture(t FleetAutoscalerPolicyType) *FleetAutoscaler {
 					},
 				},
 				{
-					Id: "holidays",
+					ID: "holidays",
 					Schedule: Schedule{
 						Between: Between{
 							Start: "2024-07-05T15:59:59Z",

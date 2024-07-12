@@ -251,8 +251,8 @@ type Schedule struct {
 
 // ChainEntry defines a single entry in the ChainPolicy.
 type ChainEntry struct {
-	// Id is the unique identifier for a ChainEntry. If not set the identifier will be set to the index of chain entry.
-	Id string `json:"id"`
+	// ID is the unique identifier for a ChainEntry. If not set the identifier will be set to the index of chain entry.
+	ID string `json:"id"`
 
 	// Schedule defines when the policy is applied.
 	Schedule Schedule `json:"schedule"`
@@ -338,7 +338,7 @@ func (fas *FleetAutoscaler) Validate() field.ErrorList {
 	return allErrs
 }
 
-// Validate validates the FleetAutoscalerPolicy settings.
+// ValidatePolicy validates a FleetAutoscalerPolicy's settings.
 func (f *FleetAutoscalerPolicy) ValidatePolicy(fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 	switch f.Type {
@@ -511,11 +511,11 @@ func (c *ChainPolicy) ValidateChainPolicy(fldPath *field.Path) field.ErrorList {
 		return append(allErrs, field.Forbidden(fldPath, "feature ScheduledAutoscaler must be enabled"))
 	}
 	for i, entry := range c.Items {
-		if entry.Id != "" {
+		if entry.ID != "" {
 			for j, otherEntry := range c.Items {
 				// If the entry's id is the same as another entry's id in the chain, append an error
-				if (entry.Id == otherEntry.Id || entry.Id == strconv.Itoa(j)) && i != j {
-					allErrs = append(allErrs, field.Invalid(fldPath.Child("items"), entry.Id, "id of chain entry must be unique"))
+				if (entry.ID == otherEntry.ID || entry.ID == strconv.Itoa(j)) && i != j {
+					allErrs = append(allErrs, field.Invalid(fldPath.Child("items"), entry.ID, "id of chain entry must be unique"))
 				}
 			}
 		}
