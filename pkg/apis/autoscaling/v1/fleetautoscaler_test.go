@@ -675,7 +675,7 @@ func customFixture(t FleetAutoscalerPolicyType) *FleetAutoscaler {
 		res.Spec.Policy.Chain = &ChainPolicy{
 			Items: []ChainEntry{
 				{
-					UID: "weekdays",
+					Id: "weekdays",
 					Schedule: Schedule{
 						Between: Between{
 							Start: "2024-07-01T15:59:59Z",
@@ -696,7 +696,7 @@ func customFixture(t FleetAutoscalerPolicyType) *FleetAutoscaler {
 					},
 				},
 				{
-					UID: "weekends",
+					Id: "weekends",
 					Schedule: Schedule{
 						Between: Between{
 							Start: "2024-07-04T15:59:59Z",
@@ -718,7 +718,7 @@ func customFixture(t FleetAutoscalerPolicyType) *FleetAutoscaler {
 					},
 				},
 				{
-					UID: "holidays",
+					Id: "holidays",
 					Schedule: Schedule{
 						Between: Between{
 							Start: "2024-07-05T15:59:59Z",
