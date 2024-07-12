@@ -477,6 +477,14 @@ func TestFleetAutoscalerChainValidateUpdate(t *testing.T) {
 			wantLength:   1,
 			wantField:    "spec.policy.chain",
 		},
+		"duplicate id": {
+			fas: modifiedFAS(func(fap *FleetAutoscalerPolicy) {
+				fap.Chain.Items[2].Id = "weekdays"
+			}),
+			featureFlags: string(runtime.FeatureScheduledAutoscaler) + "=true",
+			wantLength:   2,
+			wantField:    "spec.policy.chain.items",
+		},
 		"empty policy": {
 			fas: modifiedFAS(func(fap *FleetAutoscalerPolicy) {
 				fap.Chain.Items[0].Policy = FleetAutoscalerPolicy{}

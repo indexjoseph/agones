@@ -18,6 +18,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -250,8 +251,8 @@ type Schedule struct {
 
 // ChainEntry defines a single entry in the ChainPolicy.
 type ChainEntry struct {
-	// UID is the unique identifier for a ChainEntry. If not set the identifier will be set to the index of chain entry.
-	UID types.UID `json:"uid"`
+	// Id is the unique identifier for a ChainEntry. If not set the identifier will be set to the index of chain entry.
+	Id string `json:"id"`
 
 	// Schedule defines when the policy is applied.
 	Schedule Schedule `json:"schedule"`
@@ -510,16 +511,14 @@ func (c *ChainPolicy) ValidateChainPolicy(fldPath *field.Path) field.ErrorList {
 		return append(allErrs, field.Forbidden(fldPath, "feature ScheduledAutoscaler must be enabled"))
 	}
 	for i, entry := range c.Items {
-		// Validate that the chain entry has a policy
-		if entry.Policy.Type == "" {
-			allErrs = append(allErrs, field.Required(fldPath.Child("items").Index(i).Child("policy"), "policy type is missing"))
+		if entry.Id != "" {
+			for j, otherEntry := range c.Items {
+				// If the entry's id is the same as another entry's id in the chain, append an error
+				if (entry.Id == otherEntry.Id || entry.Id == strconv.Itoa(j)) && i != j {
+					allErrs = append(allErrs, field.Invalid(fldPath.Child("items"), entry.Id, "id of chain entry must be unique"))
+				}
+			}
 		}
-		// Ensure the chain entry's policy is not a chain policy (to avoid nested policies)
-		if entry.Policy.Type == ChainPolicyType {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("items").Index(i).Child("policy"), entry.Policy.Type, "chain policy cannot be used in chain policy"))
-		}
-		// Validate the chain entry's policy
-		allErrs = append(allErrs, entry.Policy.ValidatePolicy(fldPath.Child("items").Index(i).Child("policy"))...)
 		if entry.Schedule.Between.Start != "" {
 			// If start time is not a valid RFC3339 formatted datetime, append an error
 			if _, err := time.Parse(time.RFC3339, entry.Schedule.Between.Start); err != nil {
@@ -552,6 +551,16 @@ func (c *ChainPolicy) ValidateChainPolicy(fldPath *field.Path) field.ErrorList {
 				allErrs = append(allErrs, field.Invalid(fldPath.Child("items").Index(i).Child("schedule").Child("activePeriod").Child("duration"), entry.Schedule.ActivePeriod.Duration, fmt.Sprintf("invalid duration: %s", err)))
 			}
 		}
+		// Validate that the chain entry has a policy
+		if entry.Policy.Type == "" {
+			allErrs = append(allErrs, field.Required(fldPath.Child("items").Index(i).Child("policy"), "policy type is missing"))
+		}
+		// Ensure the chain entry's policy is not a chain policy (to avoid nested policies)
+		if entry.Policy.Type == ChainPolicyType {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("items").Index(i).Child("policy"), entry.Policy.Type, "chain policy cannot be used in chain policy"))
+		}
+		// Validate the chain entry's policy
+		allErrs = append(allErrs, entry.Policy.ValidatePolicy(fldPath.Child("items").Index(i).Child("policy"))...)
 	}
 	return allErrs
 }
