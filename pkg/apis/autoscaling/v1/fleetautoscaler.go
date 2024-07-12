@@ -18,6 +18,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -217,17 +218,17 @@ type Between struct {
 	Start string `json:"start"`
 
 	// End is the datetime that the policy is no longer eligible to be applied.
-	// This field must conform to RFC3339 format. If not set, the policy is always eligible to be applied, after the start time above. Optional field.
+	// This field must conform to RFC3339 format. If not set, the policy is always eligible to be applied, after the start time above.
 	End string `json:"end"`
 }
 
 // ActivePeriod defines the time period that the policy is applied.
 type ActivePeriod struct {
-	// Timezone to be used for the startCron field. Optional. If not set, startCron is defaulted to the UTC timezone. Optional field.
+	// Timezone to be used for the startCron field. If not set, startCron is defaulted to the UTC timezone.
 	Timezone string `json:"timezone"`
 	// StartCron defines when the policy should be applied.
 	// If not set, the policy is always to be applied within the start and end time.
-	// This field must conform to UNIX cron syntax. Optional field.
+	// This field must conform to UNIX cron syntax.
 	StartCron string `json:"startCron"`
 
 	// Duration is the length of time that the policy is applied.
@@ -235,25 +236,25 @@ type ActivePeriod struct {
 	// A duration string is a possibly signed sequence of decimal numbers,
 	// (e.g. "300ms", "-1.5h" or "2h45m").
 	// The representation limits the largest representable duration to approximately 290 years.
-	// Valid time units are "ns", "us" (or "µs"), "ms", "s", "m", "h". Optional field.
+	// Valid time units are "ns", "us" (or "µs"), "ms", "s", "m", "h".
 	Duration string `json:"duration"`
 }
 
 // Schedule defines when the policy should be applied.
 type Schedule struct {
-	// Between defines the time period that the policy is eligible to be applied. Optional field.
+	// Between defines the time period that the policy is eligible to be applied.
 	Between Between `json:"between"`
 
-	// ActivePeriod defines the time period that the policy is applied. Optional field.
+	// ActivePeriod defines the time period that the policy is applied.
 	ActivePeriod ActivePeriod `json:"activePeriod"`
 }
 
 // ChainEntry defines a single entry in the ChainPolicy.
 type ChainEntry struct {
-	// UID is the unique identifier for a ChainEntry. If not set the identifier will be set to the index of chain entry. Optional field.
-	UID types.UID `json:"uid"`
+	// Id is the unique identifier for a ChainEntry. If not set the identifier will be set to the index of chain entry.
+	Id string `json:"id"`
 
-	// Schedule defines when the policy is applied. Optional field.
+	// Schedule defines when the policy is applied.
 	Schedule Schedule `json:"schedule"`
 
 	// Policy is the name of the policy to be applied. Required field.
@@ -262,10 +263,7 @@ type ChainEntry struct {
 
 // ChainPolicy controls the desired behavior of the Chain autoscaler policy.
 type ChainPolicy struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-
-	// Items is a list of ChainEntry objects
+	// Items is a list of ChainEntry objects.
 	Items []ChainEntry `json:"items"`
 }
 
@@ -513,16 +511,14 @@ func (c *ChainPolicy) ValidateChainPolicy(fldPath *field.Path) field.ErrorList {
 		return append(allErrs, field.Forbidden(fldPath, "feature ScheduledAutoscaler must be enabled"))
 	}
 	for i, entry := range c.Items {
-		// Validate that the chain entry has a policy
-		if entry.Policy.Type == "" {
-			allErrs = append(allErrs, field.Required(fldPath.Child("items").Index(i).Child("policy"), "policy type is missing"))
+		if entry.Id != "" {
+			for j, otherEntry := range c.Items {
+				// If the entry's id is the same as another entry's id in the chain, append an error
+				if (entry.Id == otherEntry.Id || entry.Id == strconv.Itoa(j)) && i != j {
+					allErrs = append(allErrs, field.Invalid(fldPath.Child("items"), entry.Id, "id of chain entry must be unique"))
+				}
+			}
 		}
-		// Ensure the chain entry's policy is not a chain policy (to avoid nested policies)
-		if entry.Policy.Type == ChainPolicyType {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("items").Index(i).Child("policy"), entry.Policy.Type, "chain policy cannot be used in chain policy"))
-		}
-		// Validate the chain entry's policy
-		allErrs = append(allErrs, entry.Policy.ValidatePolicy(fldPath.Child("items").Index(i).Child("policy"))...)
 		if entry.Schedule.Between.Start != "" {
 			// If start time is not a valid RFC3339 formatted datetime, append an error
 			if _, err := time.Parse(time.RFC3339, entry.Schedule.Between.Start); err != nil {
@@ -555,6 +551,16 @@ func (c *ChainPolicy) ValidateChainPolicy(fldPath *field.Path) field.ErrorList {
 				allErrs = append(allErrs, field.Invalid(fldPath.Child("items").Index(i).Child("schedule").Child("activePeriod").Child("duration"), entry.Schedule.ActivePeriod.Duration, fmt.Sprintf("invalid duration: %s", err)))
 			}
 		}
+		// Validate that the chain entry has a policy
+		if entry.Policy.Type == "" {
+			allErrs = append(allErrs, field.Required(fldPath.Child("items").Index(i).Child("policy"), "policy type is missing"))
+		}
+		// Ensure the chain entry's policy is not a chain policy (to avoid nested policies)
+		if entry.Policy.Type == ChainPolicyType {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("items").Index(i).Child("policy"), entry.Policy.Type, "chain policy cannot be used in chain policy"))
+		}
+		// Validate the chain entry's policy
+		allErrs = append(allErrs, entry.Policy.ValidatePolicy(fldPath.Child("items").Index(i).Child("policy"))...)
 	}
 	return allErrs
 }

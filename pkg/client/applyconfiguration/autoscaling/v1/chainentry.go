@@ -18,14 +18,10 @@
 
 package v1
 
-import (
-	types "k8s.io/apimachinery/pkg/types"
-)
-
 // ChainEntryApplyConfiguration represents an declarative configuration of the ChainEntry type for use
 // with apply.
 type ChainEntryApplyConfiguration struct {
-	UID      *types.UID                               `json:"uid,omitempty"`
+	Id       *string                                  `json:"id,omitempty"`
 	Schedule *ScheduleApplyConfiguration              `json:"schedule,omitempty"`
 	Policy   *FleetAutoscalerPolicyApplyConfiguration `json:"policy,omitempty"`
 }
@@ -36,11 +32,11 @@ func ChainEntry() *ChainEntryApplyConfiguration {
 	return &ChainEntryApplyConfiguration{}
 }
 
-// WithUID sets the UID field in the declarative configuration to the given value
+// WithId sets the Id field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the UID field is set to the value of the last call.
-func (b *ChainEntryApplyConfiguration) WithUID(value types.UID) *ChainEntryApplyConfiguration {
-	b.UID = &value
+// If called multiple times, the Id field is set to the value of the last call.
+func (b *ChainEntryApplyConfiguration) WithId(value string) *ChainEntryApplyConfiguration {
+	b.Id = &value
 	return b
 }
 
