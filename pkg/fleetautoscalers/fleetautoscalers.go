@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/robfig/cron/v3"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/uuid"
 
@@ -61,6 +62,8 @@ func computeDesiredFleetSize(fas *autoscalingv1.FleetAutoscaler, f *agonesv1.Fle
 		return applyCounterOrListPolicy(fas.Spec.Policy.Counter, nil, f, gameServerLister, nodeCounts)
 	case autoscalingv1.ListPolicyType:
 		return applyCounterOrListPolicy(nil, fas.Spec.Policy.List, f, gameServerLister, nodeCounts)
+	case autoscalingv1.ChainPolicyType:
+		return applyChainPolicy(fas.Spec.Policy.Chain, f, gameServerLister, nodeCounts)
 	}
 
 	return 0, false, errors.New("wrong policy type, should be one of: Buffer, Webhook, Counter, List")
@@ -360,6 +363,93 @@ func applyCounterOrListPolicy(c *autoscalingv1.CounterPolicy, l *autoscalingv1.L
 		return 0, false, errors.Errorf("unable to apply CounterPolicy %v", c)
 	}
 	return 0, false, errors.Errorf("unable to apply ListPolicy %v", l)
+}
+
+// applyChainPolicy applies a chain of policies to the fleet
+func applyChainPolicy(c *autoscalingv1.ChainPolicy, f *agonesv1.Fleet, gameServerLister listeragonesv1.GameServerLister, nodeCounts map[string]gameservers.NodeCount) (int32, bool, error) {
+	if c == nil {
+		return 0, false, errors.New("chainPolicy parameter must not be nil")
+	}
+
+	if f == nil {
+		return 0, false, errors.New("fleet parameter must not be nil")
+	}
+
+	var totalReplicas int32
+	var limited bool
+	var err error
+
+	for _, entry := range c.Items {
+		if isPolicyActive(entry.Schedule) {
+			// Perform some type of status update here
+			switch entry.Policy.Type {
+			case autoscalingv1.BufferPolicyType:
+				totalReplicas, limited, err = applyBufferPolicy(entry.Policy.Buffer, f)
+			case autoscalingv1.WebhookPolicyType:
+				totalReplicas, limited, err = applyWebhookPolicy(entry.Policy.Webhook, f)
+			case autoscalingv1.CounterPolicyType:
+				totalReplicas, limited, err = applyCounterOrListPolicy(entry.Policy.Counter, nil, f, gameServerLister, nodeCounts)
+			case autoscalingv1.ListPolicyType:
+				totalReplicas, limited, err = applyCounterOrListPolicy(nil, entry.Policy.List, f, gameServerLister, nodeCounts)
+			default:
+				return 0, false, errors.New("invalid policy type in chain")
+			}
+
+			if err != nil {
+				return 0, false, err
+			}
+		}
+	}
+
+	return totalReplicas, limited, nil
+}
+
+// isPolicyActive checks if a policy should be active based on the current time and its schedule
+func isPolicyActive(s autoscalingv1.Schedule) bool {
+	now := time.Now()
+
+	// Check Between field
+	startTime, err := time.Parse(time.RFC3339, s.Between.Start)
+	if err == nil && now.Before(startTime) {
+		return false
+	}
+
+	if s.Between.End != "" {
+		endTime, err := time.Parse(time.RFC3339, s.Between.End)
+		if err == nil && now.After(endTime) {
+			return false
+		}
+	}
+
+	// Check ActivePeriod field
+	if s.ActivePeriod.StartCron == "" {
+		return true
+	}
+
+	location := time.UTC
+	if s.ActivePeriod.Timezone != "" {
+		location, err = time.LoadLocation(s.ActivePeriod.Timezone)
+		if err != nil {
+			location = time.UTC
+		}
+	}
+
+	startCron, err := cron.ParseStandard(s.ActivePeriod.StartCron)
+	if err != nil {
+		return false
+	}
+
+	nextStart := startCron.Next(now.In(location))
+	duration, err := time.ParseDuration(s.ActivePeriod.Duration)
+	if err != nil {
+		duration = 0 // indefinite duration if not set
+	}
+
+	if now.After(nextStart) && (duration == 0 || now.Before(nextStart.Add(duration))) {
+		return true
+	}
+
+	return false
 }
 
 // getSortedGameServers returns the list of Game Servers for the Fleet in the order in which the
