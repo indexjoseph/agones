@@ -27,6 +27,7 @@ kind: FleetAutoscaler
 metadata:
   name: chain-fleet-autoscaler
 spec:
+  fleetName: "fleet-example"
   policy:
     # Chain based policy for autoscaling.
     type: Chain

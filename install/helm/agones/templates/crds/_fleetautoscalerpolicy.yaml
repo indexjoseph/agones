@@ -141,6 +141,6 @@ policy:
                   type: string
                 duration: # The length of time the policy should be applied for (e.g. 2h45m).
                   type: string
-            {{- include "fleetautoscaler.policy" (dict "includeChainPolicy" false) | indent 12 }} # Defines which policy to apply during the active period. Required.
+          {{- include "fleetautoscaler.policy" (dict "includeChainPolicy" false) | indent 10 }} # Defines which policy to apply during the active period. Required.
     {{- end }}
 {{- end }}
