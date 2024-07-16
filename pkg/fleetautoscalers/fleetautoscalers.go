@@ -408,41 +408,33 @@ func applyChainPolicy(c *autoscalingv1.ChainPolicy, f *agonesv1.Fleet, gameServe
 func isPolicyActive(s autoscalingv1.Schedule) bool {
 	now := time.Now()
 
-	// Check Between field
-	startTime, err := time.Parse(time.RFC3339, s.Between.Start)
-	if err == nil && now.Before(startTime) {
-		return false
-	}
-
-	if s.Between.End != "" {
-		endTime, err := time.Parse(time.RFC3339, s.Between.End)
-		if err == nil && now.After(endTime) {
+	// If the end time
+	if s.Between.Start != "" {
+		startTime, _ := time.Parse(time.RFC3339, s.Between.Start)
+		if now.Before(startTime) {
 			return false
 		}
 	}
 
-	// Check ActivePeriod field
+	if s.Between.End != "" {
+		endTime, _ := time.Parse(time.RFC3339, s.Between.End)
+		if now.After(endTime) {
+			return false
+		}
+	}
+
+	// If no startCron field is specified, then it's automatically true
 	if s.ActivePeriod.StartCron == "" {
 		return true
 	}
 
-	location := time.UTC
-	if s.ActivePeriod.Timezone != "" {
-		location, err = time.LoadLocation(s.ActivePeriod.Timezone)
-		if err != nil {
-			location = time.UTC
-		}
-	}
-
-	startCron, err := cron.ParseStandard(s.ActivePeriod.StartCron)
-	if err != nil {
-		return false
-	}
+	location, _ := time.LoadLocation(s.ActivePeriod.Timezone)
+	startCron, _ := cron.ParseStandard(s.ActivePeriod.StartCron)
 
 	nextStart := startCron.Next(now.In(location))
 	duration, err := time.ParseDuration(s.ActivePeriod.Duration)
 	if err != nil {
-		duration = 0 // indefinite duration if not set
+		duration = 0 // Indefinite duration if not set
 	}
 
 	if now.After(nextStart) && (duration == 0 || now.Before(nextStart.Add(duration))) {
