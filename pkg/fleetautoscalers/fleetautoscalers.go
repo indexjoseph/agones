@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/robfig/cron/v3"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/uuid"
 
@@ -51,7 +52,7 @@ var client = http.Client{
 
 // computeDesiredFleetSize computes the new desired size of the given fleet
 func computeDesiredFleetSize(fas *autoscalingv1.FleetAutoscaler, f *agonesv1.Fleet,
-	gameServerLister listeragonesv1.GameServerLister, nodeCounts map[string]gameservers.NodeCount) (int32, bool, error) {
+	gameServerLister listeragonesv1.GameServerLister, nodeCounts map[string]gameservers.NodeCount, c *Controller) (int32, bool, error) {
 	switch fas.Spec.Policy.Type {
 	case autoscalingv1.BufferPolicyType:
 		return applyBufferPolicy(fas.Spec.Policy.Buffer, f)
@@ -61,6 +62,8 @@ func computeDesiredFleetSize(fas *autoscalingv1.FleetAutoscaler, f *agonesv1.Fle
 		return applyCounterOrListPolicy(fas.Spec.Policy.Counter, nil, f, gameServerLister, nodeCounts)
 	case autoscalingv1.ListPolicyType:
 		return applyCounterOrListPolicy(nil, fas.Spec.Policy.List, f, gameServerLister, nodeCounts)
+	case autoscalingv1.ChainPolicyType:
+		return applyChainPolicy(fas.Spec.Policy.Chain, f, gameServerLister, nodeCounts, c, fas)
 	}
 
 	return 0, false, errors.New("wrong policy type, should be one of: Buffer, Webhook, Counter, List")
@@ -360,6 +363,96 @@ func applyCounterOrListPolicy(c *autoscalingv1.CounterPolicy, l *autoscalingv1.L
 		return 0, false, errors.Errorf("unable to apply CounterPolicy %v", c)
 	}
 	return 0, false, errors.Errorf("unable to apply ListPolicy %v", l)
+}
+
+// applyChainPolicy applies a chain of policies to the fleet
+func applyChainPolicy(c autoscalingv1.ChainPolicy, f *agonesv1.Fleet, gameServerLister listeragonesv1.GameServerLister, nodeCounts map[string]gameservers.NodeCount, controller *Controller, fas *autoscalingv1.FleetAutoscaler) (int32, bool, error) {
+	// Ensure the scheduled autoscaler feature gate is true
+	if !runtime.FeatureEnabled(runtime.FeatureScheduledAutoscaler) {
+		return 0, false, errors.Errorf("cannot apply ChainPolicy unless feature flag %s is enabled", runtime.FeatureScheduledAutoscaler)
+	}
+
+	if c == nil {
+		return 0, false, errors.New("chainPolicy parameter must not be nil")
+	}
+
+	var totalReplicas int32
+	var limited bool
+	var err error
+
+	// Loop over all entries in the chain
+	for i, entry := range c {
+		controller.loggerForFleetAutoscaler(fas).Info(fmt.Sprintf("[JOSEPH] Inside applyChainPolicy loop chain[%d] - Policy Type(%s)", i, entry.Policy.Type))
+
+		// Check if the policy is active
+		if isScheduleActive(entry.Schedule) {
+			controller.loggerForFleetAutoscaler(fas).Info(fmt.Sprintf("[JOSEPH] Applied Policy chain[%d] - Policy Type(%s)", i, entry.Policy.Type))
+
+			// Perform some type of status update her
+			// Check what type the policy should be applied, and calculate the replics and limited capacity
+			switch entry.Policy.Type {
+			case autoscalingv1.BufferPolicyType:
+				totalReplicas, limited, err = applyBufferPolicy(entry.Policy.Buffer, f)
+			case autoscalingv1.WebhookPolicyType:
+				totalReplicas, limited, err = applyWebhookPolicy(entry.Policy.Webhook, f)
+			case autoscalingv1.CounterPolicyType:
+				totalReplicas, limited, err = applyCounterOrListPolicy(entry.Policy.Counter, nil, f, gameServerLister, nodeCounts)
+			case autoscalingv1.ListPolicyType:
+				totalReplicas, limited, err = applyCounterOrListPolicy(nil, entry.Policy.List, f, gameServerLister, nodeCounts)
+			default:
+				err = errors.New("invalid chain entry policy type within chain")
+			}
+
+			if err != nil {
+				return 0, false, err
+			}
+
+			// Break the loop once we reach the first valid schedule and the policy is applied
+			break
+		}
+	}
+
+	return totalReplicas, limited, nil
+}
+
+// isScheduleActive checks if a policy should be applied based on the current time and its schedule
+func isScheduleActive(s autoscalingv1.Schedule) bool {
+	now := time.Now()
+
+	// If the end time
+	if s.Between.Start != "" {
+		startTime, _ := time.Parse(time.RFC3339, s.Between.Start)
+		if now.Before(startTime) {
+			return false
+		}
+	}
+
+	if s.Between.End != "" {
+		endTime, _ := time.Parse(time.RFC3339, s.Between.End)
+		if now.After(endTime) {
+			return false
+		}
+	}
+
+	// If no startCron field is specified, then it's automatically true
+	if s.ActivePeriod.StartCron == "" {
+		return true
+	}
+
+	location, _ := time.LoadLocation(s.ActivePeriod.Timezone)
+	startCron, _ := cron.ParseStandard(s.ActivePeriod.StartCron)
+
+	nextStart := startCron.Next(now.In(location))
+	duration, err := time.ParseDuration(s.ActivePeriod.Duration)
+	if err != nil {
+		duration = 0 // Indefinite duration if not set
+	}
+
+	if now.After(nextStart) && (duration == 0 || now.Before(nextStart.Add(duration))) {
+		return true
+	}
+
+	return false
 }
 
 // getSortedGameServers returns the list of Game Servers for the Fleet in the order in which the
