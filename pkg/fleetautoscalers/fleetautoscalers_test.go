@@ -2134,3 +2134,44 @@ func TestApplyListPolicy(t *testing.T) {
 		})
 	}
 }
+
+// nolint:dupl  // Linter errors on lines are duplicate of TestApplyChainPolicy
+// NOTE: Does not test for the validity of a fleet autoscaler policy (ValidateChainPolicy)
+func TestApplyChainPolicy(t *testing.T) {
+	t.Parallel()
+
+	modifiedFleet := func(f func(*agonesv1.Fleet)) *agonesv1.Fleet {
+		_, fleet := defaultFixtures() // The ObjectMeta.Name of the defaultFixtures fleet is "fleet-1"
+		f(fleet)
+		return fleet
+	}
+
+	type expected struct {
+		replicas int32
+		limited  bool
+		wantErr  bool
+	}
+
+	testCases := map[string]struct {
+		fleet        *agonesv1.Fleet
+		featureFlags string
+		cp           *autoscalingv1.ChainPolicy
+		gsList       []agonesv1.GameServer
+		want         expected
+	}{
+		"scheduled autoscaler feature flag not enabled": {
+			fleet: modifiedFleet(func (f *agonesv1.Fleet){
+				
+			}),
+			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=false",
+			cp: &autoscalingv1.ChainPolicy{
+
+			},
+			want: expected{
+				replicas: 0,
+				limited: false,
+				wantErr: true,
+			},
+		}
+	}
+}

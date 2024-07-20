@@ -415,11 +415,11 @@ func applyChainPolicy(c autoscalingv1.ChainPolicy, f *agonesv1.Fleet, gameServer
 	return totalReplicas, limited, nil
 }
 
-// isScheduleActive checks if a policy should be applied based on the current time and its schedule
+// isScheduleActive checks if a chain entry's is active and returns a boolean, true if active, false otherwise
 func isScheduleActive(s autoscalingv1.Schedule) bool {
 	now := time.Now()
 
-	// If the end time
+	// If the current time is before the start time, the schedule is inactive so return false
 	if s.Between.Start != "" {
 		startTime, _ := time.Parse(time.RFC3339, s.Between.Start)
 		if now.Before(startTime) {
@@ -427,6 +427,7 @@ func isScheduleActive(s autoscalingv1.Schedule) bool {
 		}
 	}
 
+	// If the current time is after the end time, the schedule is inactive so return false
 	if s.Between.End != "" {
 		endTime, _ := time.Parse(time.RFC3339, s.Between.End)
 		if now.After(endTime) {
@@ -434,20 +435,23 @@ func isScheduleActive(s autoscalingv1.Schedule) bool {
 		}
 	}
 
-	// If no startCron field is specified, then it's automatically true
+	// If no startCron field is specified, then it's automatically true (duration is no longer relevant since we're always running)
 	if s.ActivePeriod.StartCron == "" {
 		return true
 	}
 
 	location, _ := time.LoadLocation(s.ActivePeriod.Timezone)
 	startCron, _ := cron.ParseStandard(s.ActivePeriod.StartCron)
-
-	nextStart := startCron.Next(now.In(location))
+	nextStart := startCron.Next(now.In(location)).Add(time.Minute * -1)
 	duration, err := time.ParseDuration(s.ActivePeriod.Duration)
+
+	// If there's an err, then the duration field is empty, meaning duration is indefinite
 	if err != nil {
 		duration = 0 // Indefinite duration if not set
 	}
 
+	// If the current time is after the next start time, and the duration is indefinite or the current time is before the next start time + duration,
+	// then return true
 	if now.After(nextStart) && (duration == 0 || now.Before(nextStart.Add(duration))) {
 		return true
 	}
