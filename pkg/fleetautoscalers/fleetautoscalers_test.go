@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	admregv1 "k8s.io/api/admissionregistration/v1"
@@ -2140,11 +2141,7 @@ func TestApplyListPolicy(t *testing.T) {
 func TestApplyChainPolicy(t *testing.T) {
 	t.Parallel()
 
-	modifiedFleet := func(f func(*agonesv1.Fleet)) *agonesv1.Fleet {
-		_, fleet := defaultFixtures() // The ObjectMeta.Name of the defaultFixtures fleet is "fleet-1"
-		f(fleet)
-		return fleet
-	}
+	_, fleet := defaultFixtures()
 
 	type expected struct {
 		replicas int32
@@ -2153,25 +2150,189 @@ func TestApplyChainPolicy(t *testing.T) {
 	}
 
 	testCases := map[string]struct {
-		fleet        *agonesv1.Fleet
 		featureFlags string
 		cp           *autoscalingv1.ChainPolicy
-		gsList       []agonesv1.GameServer
 		want         expected
+		now          func () time.Time
 	}{
 		"scheduled autoscaler feature flag not enabled": {
-			fleet: modifiedFleet(func (f *agonesv1.Fleet){
-				
-			}),
 			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=false",
+			cp:           &autoscalingv1.ChainPolicy{},
+			want: expected{
+				replicas: 0,
+				limited:  false,
+				wantErr:  true,
+			},
+			now: func() time.Time {
+				return time.
+			}
+		},
+		"nil chain policy": {
+			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
+			cp:           nil,
+			want: expected{
+				replicas: 0,
+				limited:  false,
+				wantErr:  true,
+			},
+		},
+		"no policies": {
+			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
 			cp: &autoscalingv1.ChainPolicy{
-
+				{
+					ID: "",
+					Schedule: autoscalingv1.Schedule{
+						Between: autoscalingv1.Between{
+							Start: "00:00",
+						},
+					},
+				},
 			},
 			want: expected{
 				replicas: 0,
-				limited: false,
-				wantErr: true,
+				limited:  false,
+				wantErr:  true,
 			},
-		}
+		},
+		"default policy": {
+			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
+			cp: &autoscalingv1.ChainPolicy{
+				{
+					ID: "",
+					Policy: autoscalingv1.Policy{
+						Counter: &autoscalingv1.CounterPolicy{
+							MaxReplicas: 5,
+						},
+					},
+				},
+			},
+			want: expected{
+				replicas: 5,
+				limited:  false,
+				wantErr:  false,
+			},
+		},
+		
+							
+		"daylight saving time": {
+			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
+			cp: &autoscalingv1.ChainPolicy{
+				{
+					ID: "",
+					Schedule: autoscalingv1.Schedule{
+						Between: autoscalingv1.Between{
+							Start: "00:00",
+						},
+					},
+				},
+			},
+			want: expected{
+				replicas: 0,
+				limited:  false,
+				wantErr:  true,
+			},
+		},
+		"leap year time change": {
+			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
+			cp: &autoscalingv1.ChainPolicy{
+				{
+					ID: "",
+					Schedule: autoscalingv1.Schedule{
+						Between: autoscalingv1.Between{
+							Start: "00:00",
+						},
+					},
+				},
+			},
+			want: expected{
+				replicas: 0,
+				limited:  false,
+				wantErr:  true,
+			},
+		},
+		"two chain entries, no default": {
+			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
+			cp: &autoscalingv1.ChainPolicy{
+				{
+					ID: "",
+					Schedule: autoscalingv1.Schedule{
+						Between: autoscalingv1.Between{
+							Start: "00:00",
+						},
+					},
+					Policy: autoscalingv1.Policy{
+						Counter: &autoscalingv1.CounterPolicy{
+							MaxReplicas: 10
+							},
+					},
+				},
+				{
+					ID: "",
+					Schedule: autoscalingv1.Schedule{
+						Between: autoscalingv1.Between{
+							Start: "12:00",
+						},
+					},
+					Policy: autoscalingv1.Policy{
+						Counter: &autoscalingv1.CounterPolicy{
+							MaxReplicas: 20
+							},
+					},
+				},
+			},
+			want: expected{
+				replicas: 0,
+				limited:  false,
+				wantErr:  true,
+			},
+		},
+		"two chain entries, default": {
+			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
+			cp: &autoscalingv1.ChainPolicy{
+				{
+					ID: "",
+					Schedule: autoscalingv1.Schedule{
+						Between: autoscalingv1.Between{
+							Start: "00:00",
+						},
+					},
+					Policy: autoscalingv1.Policy{
+						Counter: &autoscalingv1.CounterPolicy{
+							MaxReplicas: 10
+							},
+					},
+				},
+				{
+					ID: "",
+					Schedule: autoscalingv1.Schedule{
+						Between: autoscalingv1.Between{
+							Start: "12:00",
+						},
+					},
+					Policy: autoscalingv1.Policy{
+						Counter: &autoscalingv1.CounterPolicy{
+							MaxReplicas: 20
+							},
+					},
+				},
+				{
+					ID: "",
+					Schedule: autoscalingv1.Schedule{
+						Default: true,
+					},
+					Policy: autoscalingv1.Policy{
+						Counter: &autoscalingv1.CounterPolicy{
+							MaxReplicas: 5
+							},
+					},
+				},
+			},
+			want: expected{
+				replicas: 5,
+				limited:  false,
+				wantErr:  false,
+			},
+		},
+						
 	}
 }
