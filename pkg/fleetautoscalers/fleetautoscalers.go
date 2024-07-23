@@ -63,7 +63,7 @@ func computeDesiredFleetSize(fas *autoscalingv1.FleetAutoscaler, f *agonesv1.Fle
 	case autoscalingv1.ListPolicyType:
 		return applyCounterOrListPolicy(nil, fas.Spec.Policy.List, f, gameServerLister, nodeCounts)
 	case autoscalingv1.ChainPolicyType:
-		return applyChainPolicy(fas.Spec.Policy.Chain, f, gameServerLister, nodeCounts, c, fas)
+		return applyChainPolicy(fas.Spec.Policy.Chain, f, gameServerLister, nodeCounts)
 	}
 
 	return 0, false, errors.New("wrong policy type, should be one of: Buffer, Webhook, Counter, List")
@@ -366,7 +366,7 @@ func applyCounterOrListPolicy(c *autoscalingv1.CounterPolicy, l *autoscalingv1.L
 }
 
 // applyChainPolicy applies a chain of policies to the fleet
-func applyChainPolicy(c autoscalingv1.ChainPolicy, f *agonesv1.Fleet, gameServerLister listeragonesv1.GameServerLister, nodeCounts map[string]gameservers.NodeCount, controller *Controller, fas *autoscalingv1.FleetAutoscaler) (int32, bool, error) {
+func applyChainPolicy(c autoscalingv1.ChainPolicy, f *agonesv1.Fleet, gameServerLister listeragonesv1.GameServerLister, nodeCounts map[string]gameservers.NodeCount) (int32, bool, error) {
 	// Ensure the scheduled autoscaler feature gate is true
 	if !runtime.FeatureEnabled(runtime.FeatureScheduledAutoscaler) {
 		return 0, false, errors.Errorf("cannot apply ChainPolicy unless feature flag %s is enabled", runtime.FeatureScheduledAutoscaler)
@@ -379,14 +379,15 @@ func applyChainPolicy(c autoscalingv1.ChainPolicy, f *agonesv1.Fleet, gameServer
 	var totalReplicas int32
 	var limited bool
 	var err error
+	var webhookErr error
 
 	// Loop over all entries in the chain
-	for i, entry := range c {
-		controller.loggerForFleetAutoscaler(fas).Info(fmt.Sprintf("[JOSEPH] Inside applyChainPolicy loop chain[%d] - Policy Type(%s)", i, entry.Policy.Type))
+	for _, entry := range c {
+		// controller.loggerForFleetAutoscaler(fas).Info(fmt.Sprintf("[JOSEPH] Inside applyChainPolicy loop chain[%d] - Policy Type(%s)", i, entry.Policy.Type))
 
 		// Check if the policy is active
 		if isScheduleActive(entry.Schedule) {
-			controller.loggerForFleetAutoscaler(fas).Info(fmt.Sprintf("[JOSEPH] Applied Policy chain[%d] - Policy Type(%s)", i, entry.Policy.Type))
+			// controller.loggerForFleetAutoscaler(fas).Info(fmt.Sprintf("[JOSEPH] Applied Policy chain[%d] - Policy Type(%s)", i, entry.Policy.Type))
 
 			// Perform some type of status update her
 			// Check what type the policy should be applied, and calculate the replics and limited capacity
@@ -396,7 +397,7 @@ func applyChainPolicy(c autoscalingv1.ChainPolicy, f *agonesv1.Fleet, gameServer
 			case autoscalingv1.WebhookPolicyType:
 				totalReplicas, limited, err = applyWebhookPolicy(entry.Policy.Webhook, f)
 			case autoscalingv1.CounterPolicyType:
-				totalReplicas, limited, err = applyCounterOrListPolicy(entry.Policy.Counter, nil, f, gameServerLister, nodeCounts)
+				totalReplicas, limited, webhookErr = applyCounterOrListPolicy(entry.Policy.Counter, nil, f, gameServerLister, nodeCounts)
 			case autoscalingv1.ListPolicyType:
 				totalReplicas, limited, err = applyCounterOrListPolicy(nil, entry.Policy.List, f, gameServerLister, nodeCounts)
 			default:
@@ -408,7 +409,9 @@ func applyChainPolicy(c autoscalingv1.ChainPolicy, f *agonesv1.Fleet, gameServer
 			}
 
 			// Break the loop once we reach the first valid schedule and the policy is applied
-			break
+			if webhookErr == nil {
+				break
+			}
 		}
 	}
 

@@ -2141,39 +2141,69 @@ func TestApplyListPolicy(t *testing.T) {
 func TestApplyChainPolicy(t *testing.T) {
 	t.Parallel()
 
-	_, fleet := defaultFixtures()
+	nc := map[string]gameservers.NodeCount{
+		"n1": {Ready: 1, Allocated: 1},
+	}
+	modifiedFleet := func(f func(*agonesv1.Fleet)) *agonesv1.Fleet {
+		_, fleet := defaultFixtures()
+		f(fleet)
+		return fleet
+	}
 
 	type expected struct {
 		replicas int32
 		limited  bool
-		wantErr  bool
+		err      string
 	}
 
 	testCases := map[string]struct {
-		featureFlags string
-		cp           *autoscalingv1.ChainPolicy
-		want         expected
-		now          func () time.Time
+		fleet                   *agonesv1.Fleet
+		featureFlags            string
+		specReplicas            int32
+		statusReplicas          int32
+		statusAllocatedReplicas int32
+		statusReadyReplicas     int32
+		cp                      *autoscalingv1.ChainPolicy
+		gsList                  []agonesv1.GameServer
+		now                     func() time.Time
+		want                    expected
 	}{
 		"scheduled autoscaler feature flag not enabled": {
+			fleet: modifiedFleet(func(f *agonesv1.Fleet) {
+				f.Spec.Template.Spec.Lists = make(map[string]agonesv1.ListStatus)
+				f.Spec.Template.Spec.Lists["gamers"] = agonesv1.ListStatus{
+					Values:   []string{},
+					Capacity: 7}
+				f.Status.Replicas = 10
+				f.Status.ReadyReplicas = 5
+				f.Status.AllocatedReplicas = 5
+				f.Status.Lists = make(map[string]agonesv1.AggregatedListStatus)
+				f.Status.Lists["gamers"] = agonesv1.AggregatedListStatus{
+					Count:    31,
+					Capacity: 70,
+				}
+			}),
 			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=false",
 			cp:           &autoscalingv1.ChainPolicy{},
+			now: func() time.Time {
+				return time.Time{}
+			},
 			want: expected{
 				replicas: 0,
 				limited:  false,
-				wantErr:  true,
+				err:      "",
 			},
-			now: func() time.Time {
-				return time.
-			}
 		},
 		"nil chain policy": {
 			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
 			cp:           nil,
+			now: func() time.Time {
+				return time.Time{}
+			},
 			want: expected{
 				replicas: 0,
 				limited:  false,
-				wantErr:  true,
+				err:      "",
 			},
 		},
 		"no policies": {
@@ -2188,33 +2218,97 @@ func TestApplyChainPolicy(t *testing.T) {
 					},
 				},
 			},
+			now: func() time.Time {
+				return time.Time{}
+			},
 			want: expected{
 				replicas: 0,
 				limited:  false,
-				wantErr:  true,
+				err:      "",
 			},
 		},
 		"default policy": {
 			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
 			cp: &autoscalingv1.ChainPolicy{
 				{
-					ID: "",
-					Policy: autoscalingv1.Policy{
-						Counter: &autoscalingv1.CounterPolicy{
-							MaxReplicas: 5,
-						},
-					},
+					ID:     "",
+					Policy: autoscalingv1.FleetAutoscalerPolicy{},
 				},
 			},
 			want: expected{
 				replicas: 5,
 				limited:  false,
-				wantErr:  false,
+				err:      "",
 			},
 		},
-		
-							
-		"daylight saving time": {
+		"two chain entries, no default": {
+			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
+			cp: &autoscalingv1.ChainPolicy{
+				{
+					ID: "",
+					Schedule: autoscalingv1.Schedule{
+						Between: autoscalingv1.Between{
+							Start: "00:00",
+						},
+					},
+					Policy: autoscalingv1.FleetAutoscalerPolicy{},
+				},
+				{
+					ID: "",
+					Schedule: autoscalingv1.Schedule{
+						Between: autoscalingv1.Between{
+							Start: "12:00",
+						},
+					},
+					Policy: autoscalingv1.FleetAutoscalerPolicy{},
+				},
+			},
+			want: expected{
+				replicas: 0,
+				limited:  false,
+				err:      "",
+			},
+		},
+		"two chain entries, one default": {
+			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
+			cp: &autoscalingv1.ChainPolicy{
+				{
+					ID: "",
+					Schedule: autoscalingv1.Schedule{
+						Between: autoscalingv1.Between{
+							Start: "00:00",
+						},
+					},
+					Policy: autoscalingv1.FleetAutoscalerPolicy{},
+				},
+				{
+					ID: "",
+					Schedule: autoscalingv1.Schedule{
+						Between: autoscalingv1.Between{
+							Start: "12:00",
+						},
+					},
+					Policy: autoscalingv1.FleetAutoscalerPolicy{},
+				},
+				{
+					ID:       "",
+					Schedule: autoscalingv1.Schedule{},
+					Policy:   autoscalingv1.FleetAutoscalerPolicy{},
+				},
+			},
+			want: expected{
+				replicas: 5,
+				limited:  false,
+				err:      "",
+			},
+		},
+		"two default entries": {
+
+		},
+		"differing start and end timezones": {
+
+		},
+		"daylight saving time start": {
 			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
 			cp: &autoscalingv1.ChainPolicy{
 				{
@@ -2229,7 +2323,43 @@ func TestApplyChainPolicy(t *testing.T) {
 			want: expected{
 				replicas: 0,
 				limited:  false,
-				wantErr:  true,
+				err:      "",
+			},
+		},
+		"daylight saving time end": {
+			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
+			cp: &autoscalingv1.ChainPolicy{
+				{
+					ID: "",
+					Schedule: autoscalingv1.Schedule{
+						Between: autoscalingv1.Between{
+							Start: "00:00",
+						},
+					},
+				},
+			},
+			want: expected{
+				replicas: 0,
+				limited:  false,
+				err:      "",
+			},
+		},
+		"daylight saving time cron time": {
+			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
+			cp: &autoscalingv1.ChainPolicy{
+				{
+					ID: "",
+					Schedule: autoscalingv1.Schedule{
+						Between: autoscalingv1.Between{
+							Start: "00:00",
+						},
+					},
+				},
+			},
+			want: expected{
+				replicas: 0,
+				limited:  false,
+				err:      "",
 			},
 		},
 		"leap year time change": {
@@ -2247,92 +2377,52 @@ func TestApplyChainPolicy(t *testing.T) {
 			want: expected{
 				replicas: 0,
 				limited:  false,
-				wantErr:  true,
+				err:      "",
 			},
 		},
-		"two chain entries, no default": {
-			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
-			cp: &autoscalingv1.ChainPolicy{
-				{
-					ID: "",
-					Schedule: autoscalingv1.Schedule{
-						Between: autoscalingv1.Between{
-							Start: "00:00",
-						},
-					},
-					Policy: autoscalingv1.Policy{
-						Counter: &autoscalingv1.CounterPolicy{
-							MaxReplicas: 10
-							},
-					},
-				},
-				{
-					ID: "",
-					Schedule: autoscalingv1.Schedule{
-						Between: autoscalingv1.Between{
-							Start: "12:00",
-						},
-					},
-					Policy: autoscalingv1.Policy{
-						Counter: &autoscalingv1.CounterPolicy{
-							MaxReplicas: 20
-							},
-					},
-				},
-			},
-			want: expected{
-				replicas: 0,
-				limited:  false,
-				wantErr:  true,
-			},
+		"new year": {
+
 		},
-		"two chain entries, default": {
-			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
-			cp: &autoscalingv1.ChainPolicy{
-				{
-					ID: "",
-					Schedule: autoscalingv1.Schedule{
-						Between: autoscalingv1.Between{
-							Start: "00:00",
-						},
-					},
-					Policy: autoscalingv1.Policy{
-						Counter: &autoscalingv1.CounterPolicy{
-							MaxReplicas: 10
-							},
-					},
-				},
-				{
-					ID: "",
-					Schedule: autoscalingv1.Schedule{
-						Between: autoscalingv1.Between{
-							Start: "12:00",
-						},
-					},
-					Policy: autoscalingv1.Policy{
-						Counter: &autoscalingv1.CounterPolicy{
-							MaxReplicas: 20
-							},
-					},
-				},
-				{
-					ID: "",
-					Schedule: autoscalingv1.Schedule{
-						Default: true,
-					},
-					Policy: autoscalingv1.Policy{
-						Counter: &autoscalingv1.CounterPolicy{
-							MaxReplicas: 5
-							},
-					},
-				},
-			},
-			want: expected{
-				replicas: 5,
-				limited:  false,
-				wantErr:  false,
-			},
-		},
-						
+	}
+
+	utilruntime.FeatureTestMutex.Lock()
+	defer utilruntime.FeatureTestMutex.Unlock()
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			err := utilruntime.ParseFeatures(tc.featureFlags)
+			assert.NoError(t, err)
+
+			// For Counters and Lists
+			m := agtesting.NewMocks()
+			m.AgonesClient.AddReactor("list", "gameservers", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				return true, &agonesv1.GameServerList{Items: tc.gsList}, nil
+			})
+
+			informer := m.AgonesInformerFactory.Agones().V1()
+			_, cancel := agtesting.StartInformers(m,
+				informer.GameServers().Informer().HasSynced)
+			defer cancel()
+
+			m = agtesting.NewMocks()
+			m.AgonesClient.AddReactor("list", "gameservers", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				return true, &agonesv1.GameServerList{Items: tc.gsList}, nil
+			})
+
+			informer = m.AgonesInformerFactory.Agones().V1()
+			_, cancel = agtesting.StartInformers(m,
+				informer.GameServers().Informer().HasSynced)
+			defer cancel()
+
+			replicas, limited, err := applyChainPolicy(*tc.cp, tc.fleet, informer.GameServers().Lister(), nc)
+
+			if tc.want.err != "" && assert.NotNil(t, err) {
+				assert.Equal(t, tc.want.err, err.Error())
+			} else {
+				assert.Nil(t, err)
+				assert.Equal(t, tc.want.replicas, replicas)
+				assert.Equal(t, tc.want.limited, limited)
+			}
+		})
 	}
 }
