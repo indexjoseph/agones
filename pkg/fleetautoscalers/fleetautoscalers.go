@@ -65,7 +65,7 @@ func computeDesiredFleetSize(pol autoscalingv1.FleetAutoscalerPolicy, f *agonesv
 	case autoscalingv1.SchedulePolicyType:
 		return applySchedulePolicy(pol.Schedule, f, gameServerLister, nodeCounts, time.Now())
 	case autoscalingv1.ChainPolicyType:
-		return applyChainPolicy(pol.Chain, f, gameServerLister, nodeCounts)
+		return applyChainPolicy(pol.Chain, f, gameServerLister, nodeCounts, time.Now())
 	}
 
 	return 0, false, errors.New("wrong policy type, should be one of: Buffer, Webhook, Counter, List")
@@ -373,78 +373,69 @@ func applySchedulePolicy(s *autoscalingv1.SchedulePolicy, f *agonesv1.Fleet, gam
 		return 0, false, errors.Errorf("cannot apply SchedulePolicy unless feature flag %s is enabled", runtime.FeatureScheduledAutoscaler)
 	}
 
-	fmt.Println("Above")
 	if isScheduleActive(s, currentTime) {
-		fmt.Println("Inside")
 		return computeDesiredFleetSize(s.Policy, f, gameServerLister, nodeCounts)
 	}
 
-	var replicas int32
-	fmt.Println("Outside")
-	if f != nil {
-		replicas = f.Status.Replicas
-	}
-
-	return replicas, false, nil
+	return f.Status.Replicas, false, errors.New("Inactive Schedule, Policy Not Applicable")
 }
 
-func applyChainPolicy(c autoscalingv1.ChainPolicy, f *agonesv1.Fleet, gameServerLister listeragonesv1.GameServerLister, nodeCounts map[string]gameservers.NodeCount) (int32, bool, error) {
+func applyChainPolicy(c autoscalingv1.ChainPolicy, f *agonesv1.Fleet, gameServerLister listeragonesv1.GameServerLister, nodeCounts map[string]gameservers.NodeCount, currentTime time.Time) (int32, bool, error) {
 	// Ensure the scheduled autoscaler feature gate is enabled
 	if !runtime.FeatureEnabled(runtime.FeatureScheduledAutoscaler) {
 		return 0, false, errors.Errorf("cannot apply ChainPolicy unless feature flag %s is enabled", runtime.FeatureScheduledAutoscaler)
 	}
 
+	replicas := f.Status.Replicas
+	var limited bool
+	var err error
+
 	// Loop over all entries in the chain
 	for _, entry := range c {
 		switch entry.Type {
 		case autoscalingv1.SchedulePolicyType:
-			fmt.Println("Schedule")
-			schedRep, schedLim, schedErr := applySchedulePolicy(entry.Schedule, f, gameServerLister, nodeCounts, time.Now())
-			// If the schedule is active and no error was returned from the policy, then return the replicas, limited and error
-			if isScheduleActive(entry.Schedule, time.Now()) && schedErr == nil {
-				fmt.Println("Schedule Active")
-				return schedRep, schedLim, nil
+			replicas, limited, err = applySchedulePolicy(entry.Schedule, f, gameServerLister, nodeCounts, currentTime)
+			// If no error was returned from the schedule policy (schedule is active), then return the values given
+			if err == nil {
+				return replicas, limited, nil
 			}
 		case autoscalingv1.WebhookPolicyType:
-			fmt.Println("Webhook")
-			webhookRep, webhookLim, webhookErr := applyWebhookPolicy(entry.Webhook, f)
-			if webhookErr == nil {
-				fmt.Println("Webhook Active")
-				return webhookRep, webhookLim, nil
+			replicas, limited, err := applyWebhookPolicy(entry.Webhook, f)
+			// If no error was returned from the webhook policy, then return the values given
+			if err == nil {
+				return replicas, limited, nil
 			}
 		default:
-			fmt.Println("Default")
+			// Every other policy type we just want to compute the desired fleet and return it
 			return computeDesiredFleetSize(entry.FleetAutoscalerPolicy, f, gameServerLister, nodeCounts)
 		}
 	}
 
-	fmt.Println("Last Return")
-	return f.Status.Replicas, false, nil
+	// Fall off the chain
+	return replicas, limited, err
 }
 
 // isScheduleActive checks if a chain entry's is active and returns a boolean, true if active, false otherwise
 func isScheduleActive(s *autoscalingv1.SchedulePolicy, currentTime time.Time) bool {
-	// var now = time.Now()
-	// fmt.Printf("Time Now Is: %s\n", now)
-	cronDelta := time.Minute * -2
+	// When retrieving the next available cronTime it returns the next minute e.g. if you want a policy to run every minute (all the time)
+	// If the current time is 1:00, the next start time returned will be 1:01, thus we use a cronDelta of 1 minute and 30 secpmds to
+	// adjust to the minute delta (since the next start time will always be ahead of the current time by 1 minute).
+	cronDelta := (time.Minute * -1) + (time.Second * -30)
 
 	// If a start time is present and the current time is before the start time, the schedule is inactive so return false
 	startTime := s.Between.Start.Time
-	if !startTime.IsZero() && currentTime.Before(startTime) {
-		fmt.Println("ONE")
+	if currentTime.Before(startTime) {
 		return false
 	}
 
 	// If an end time is present and the current time is after the end time, the schedule is inactive so return false
 	endTime := s.Between.End.Time
 	if !endTime.IsZero() && currentTime.After(endTime) {
-		fmt.Println("TWO")
 		return false
 	}
 
 	// If no startCron field is specified, then it's automatically true (duration is no longer relevant since we're always running)
 	if s.ActivePeriod.StartCron == "" {
-		fmt.Println("THREE")
 		return true
 	}
 
@@ -460,14 +451,10 @@ func isScheduleActive(s *autoscalingv1.SchedulePolicy, currentTime time.Time) bo
 
 	// If the current time is after the next start time, and the duration is indefinite or the current time is before the next start time + duration,
 	// then return true
-	fmt.Printf("Current Time: %s\n", currentTime)
-	fmt.Printf("Next Start Time: %s\n", nextStartTime)
 	if currentTime.After(nextStartTime) && (duration == 0 || currentTime.Before(nextStartTime.Add(duration))) {
-		fmt.Println("FOUR")
 		return true
 	}
 
-	fmt.Println("FIVE")
 	return false
 }
 
