@@ -2420,192 +2420,192 @@ func TestApplySchedulePolicy(t *testing.T) {
 
 // nolint:dupl  // Linter errors on lines are duplicate of TestApplyChainPolicy
 // NOTE: Does not test for the validity of a fleet autoscaler policy (ValidateChainPolicy)
-// func TestApplyChainPolicy(t *testing.T) {
-// 	t.Parallel()
+func TestApplyChainPolicy(t *testing.T) {
+	t.Parallel()
+	ts := testServer{}
+	server := httptest.NewServer(ts)
+	defer server.Close()
 
-// 	// For Counters and Lists
-// 	nc := map[string]gameservers.NodeCount{
-// 		"n1": {Ready: 1, Allocated: 1},
-// 	}
-// 	modifiedFleet := func(f func(*agonesv1.Fleet)) *agonesv1.Fleet {
-// 		_, fleet := defaultFixtures()
-// 		f(fleet)
-// 		return fleet
-// 	}
+	// 	// For Counters and Lists
+	// 	nc := map[string]gameservers.NodeCount{
+	// 		"n1": {Ready: 1, Allocated: 1},
+	// 	}
+	// 	modifiedFleet := func(f func(*agonesv1.Fleet)) *agonesv1.Fleet {
+	// 		_, fleet := defaultFixtures()
+	// 		f(fleet)
+	// 		return fleet
+	// 	}
 
-// 	// For Webhook Policy
-// 	url := "scale"
-// 	invalidURL := ")1golang.org/"
+	// For Webhook Policy
+	// url := "scale"
+	// invalidURL := ")1golang.org/"
 
-// 	type expected struct {
-// 		replicas int32
-// 		limited  bool
-// 		wantErr  bool
-// 	}
+	type expected struct {
+		replicas int32
+		limited  bool
+		wantErr  bool
+	}
 
-// 	testCases := map[string]struct {
-// 		fleet                   *agonesv1.Fleet
-// 		featureFlags            string
-// 		specReplicas            int32
-// 		statusReplicas          int32
-// 		statusAllocatedReplicas int32
-// 		statusReadyReplicas     int32
-// 		now                     func() time.Time
-// 		cp                      *autoscalingv1.ChainPolicy
-// 		gsList                  []agonesv1.GameServer
-// 		want                    expected
-// 	}{
-// 		"scheduled autoscaler feature flag not enabled": {
-// 			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=false",
-// 			cp:           &autoscalingv1.ChainPolicy{},
-// 			now: func() time.Time {
-// 				return time.Time{}
-// 			},
-// 			want: expected{
-// 				replicas: 0,
-// 				limited:  false,
-// 				wantErr:  false,
-// 			},
-// 		},
-// 		"nil chain policy": {
-// 			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
-// 			cp:           nil,
-// 			now: func() time.Time {
-// 				return time.Time{}
-// 			},
-// 			want: expected{
-// 				replicas: 0,
-// 				limited:  false,
-// 				wantErr:  false,
-// 			},
-// 		},
-// 		"default policy": {
-// 			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
-// 			cp: &autoscalingv1.ChainPolicy{
-// 				{
-// 					ID: "",
-// 					FleetAutoscalerPolicy: autoscalingv1.FleetAutoscalerPolicy{
-// 						Type: autoscalingv1.BufferPolicyType,
-// 						Buffer: &autoscalingv1.BufferPolicy{
-// 							MinReplicas: 5,
-// 							MaxReplicas: 10,
-// 							BufferSize:  intstr.FromInt(1),
-// 						},
-// 					},
-// 				},
-// 			},
-// 			want: expected{
-// 				replicas: 5,
-// 				limited:  false,
-// 				wantErr:  false,
-// 			},
-// 		},
-// 		"one webhook policy, no default policy": {
-// 			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
-// 			cp: &autoscalingv1.ChainPolicy{
-// 				{
-// 					ID:                    "",
-// 					FleetAutoscalerPolicy: autoscalingv1.FleetAutoscalerPolicy{},
-// 				},
-// 			},
-// 		},
-// 		"one webhook policy, one default policy": {
-// 			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
-// 			cp: &autoscalingv1.ChainPolicy{
-// 				{
-// 					ID:                    "",
-// 					FleetAutoscalerPolicy: autoscalingv1.FleetAutoscalerPolicy{},
-// 				},
-// 				{
-// 					ID: "",
-// 					FleetAutoscalerPolicy: autoscalingv1.FleetAutoscalerPolicy{
-// 						Type: autoscalingv1.BufferPolicyType,
-// 						Buffer: &autoscalingv1.BufferPolicy{
-// 							MinReplicas: 5,
-// 							MaxReplicas: 10,
-// 							BufferSize:  intstr.FromInt(1),
-// 						},
-// 					},
-// 				},
-// 			},
-// 		},
-// 		"two inactive schedule entries, no default": {
-// 			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
-// 			cp: &autoscalingv1.ChainPolicy{
-// 				{
-// 					ID:                    "",
-// 					FleetAutoscalerPolicy: autoscalingv1.FleetAutoscalerPolicy{
-// 						// Between: autoscalingv1.Between{
-// 						// 	Start: "00:00",
-// 						// },
-// 					},
-// 				},
-// 				{
-// 					ID:                    "",
-// 					FleetAutoscalerPolicy: autoscalingv1.FleetAutoscalerPolicy{},
-// 				},
-// 			},
-// 			want: expected{
-// 				replicas: 0,
-// 				limited:  false,
-// 				wantErr:  false,
-// 			},
-// 		},
-// 		"two inactive schedules entries, one default": {
-// 			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
-// 			cp: &autoscalingv1.ChainPolicy{
-// 				{
-// 					ID:                    "",
-// 					FleetAutoscalerPolicy: autoscalingv1.FleetAutoscalerPolicy{},
-// 				},
-// 				{
-// 					ID:                    "",
-// 					FleetAutoscalerPolicy: autoscalingv1.FleetAutoscalerPolicy{},
-// 				},
-// 				{
-// 					ID:                    "",
-// 					FleetAutoscalerPolicy: autoscalingv1.FleetAutoscalerPolicy{},
-// 				},
-// 			},
-// 			want: expected{
-// 				replicas: 5,
-// 				limited:  false,
-// 				wantErr:  false,
-// 			},
-// 		},
-// 	}
+	testCases := map[string]struct {
+		fleet                   *agonesv1.Fleet
+		featureFlags            string
+		specReplicas            int32
+		statusReplicas          int32
+		statusAllocatedReplicas int32
+		statusReadyReplicas     int32
+		now                     func() time.Time
+		cp                      *autoscalingv1.ChainPolicy
+		gsList                  []agonesv1.GameServer
+		want                    expected
+	}{
+		// "scheduled autoscaler feature flag not enabled": {
+		// 	featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=false",
+		// 	cp:           &autoscalingv1.ChainPolicy{},
+		// 	want: expected{
+		// 		replicas: 0,
+		// 		limited:  false,
+		// 		wantErr:  true,
+		// 	},
+		// },
+		// "default policy": {
+		// 	featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
+		// 	cp: &autoscalingv1.ChainPolicy{
+		// 		{
+		// 			ID: "",
+		// 			FleetAutoscalerPolicy: autoscalingv1.FleetAutoscalerPolicy{
+		// 				Type: autoscalingv1.BufferPolicyType,
+		// 				Buffer: &autoscalingv1.BufferPolicy{
+		// 					BufferSize:  intstr.FromInt(1),
+		// 					MinReplicas: 5,
+		// 					MaxReplicas: 10,
+		// 				},
+		// 			},
+		// 		},
+		// 	},
+		// 	want: expected{
+		// 		replicas: 5,
+		// 		limited:  true,
+		// 		wantErr:  false,
+		// 	},
+		// },
+		"one webhook policy, no default policy": {
+			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
+			cp: &autoscalingv1.ChainPolicy{
+				{
+					ID: "",
+					FleetAutoscalerPolicy: autoscalingv1.FleetAutoscalerPolicy{
+						Type: autoscalingv1.WebhookPolicyType,
+						Webhook: &autoscalingv1.WebhookPolicy{
+							Service: nil,
+							URL:     &(server.URL),
+						},
+					},
+				},
+			},
+			want: expected{
+				replicas: 50,
+				limited:  false,
+				wantErr:  false,
+			},
+		},
+		// 		"one webhook policy, one default policy": {
+		// 			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
+		// 			cp: &autoscalingv1.ChainPolicy{
+		// 				{
+		// 					ID:                    "",
+		// 					FleetAutoscalerPolicy: autoscalingv1.FleetAutoscalerPolicy{},
+		// 				},
+		// 				{
+		// 					ID: "",
+		// 					FleetAutoscalerPolicy: autoscalingv1.FleetAutoscalerPolicy{
+		// 						Type: autoscalingv1.BufferPolicyType,
+		// 						Buffer: &autoscalingv1.BufferPolicy{
+		// 							MinReplicas: 5,
+		// 							MaxReplicas: 10,
+		// 							BufferSize:  intstr.FromInt(1),
+		// 						},
+		// 					},
+		// 				},
+		// 			},
+		// 		},
+		// 		"two inactive schedule entries, no default": {
+		// 			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
+		// 			cp: &autoscalingv1.ChainPolicy{
+		// 				{
+		// 					ID:                    "",
+		// 					FleetAutoscalerPolicy: autoscalingv1.FleetAutoscalerPolicy{
+		// 						// Between: autoscalingv1.Between{
+		// 						// 	Start: "00:00",
+		// 						// },
+		// 					},
+		// 				},
+		// 				{
+		// 					ID:                    "",
+		// 					FleetAutoscalerPolicy: autoscalingv1.FleetAutoscalerPolicy{},
+		// 				},
+		// 			},
+		// 			want: expected{
+		// 				replicas: 0,
+		// 				limited:  false,
+		// 				wantErr:  false,
+		// 			},
+		// 		},
+		// 		"two inactive schedules entries, one default": {
+		// 			featureFlags: string(utilruntime.FeatureScheduledAutoscaler) + "=true",
+		// 			cp: &autoscalingv1.ChainPolicy{
+		// 				{
+		// 					ID:                    "",
+		// 					FleetAutoscalerPolicy: autoscalingv1.FleetAutoscalerPolicy{},
+		// 				},
+		// 				{
+		// 					ID:                    "",
+		// 					FleetAutoscalerPolicy: autoscalingv1.FleetAutoscalerPolicy{},
+		// 				},
+		// 				{
+		// 					ID:                    "",
+		// 					FleetAutoscalerPolicy: autoscalingv1.FleetAutoscalerPolicy{},
+		// 				},
+		// 			},
+		// 			want: expected{
+		// 				replicas: 5,
+		// 				limited:  false,
+		// 				wantErr:  false,
+		// 			},
+		// 		},
+	}
 
-// 	utilruntime.FeatureTestMutex.Lock()
-// 	defer utilruntime.FeatureTestMutex.Unlock()
+	utilruntime.FeatureTestMutex.Lock()
+	defer utilruntime.FeatureTestMutex.Unlock()
 
-// 	for name, tc := range testCases {
-// 		t.Run(name, func(t *testing.T) {
-// 			err := utilruntime.ParseFeatures(tc.featureFlags)
-// 			assert.NoError(t, err)
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			err := utilruntime.ParseFeatures(tc.featureFlags)
+			assert.NoError(t, err)
 
-// 			// For Counters and Lists
-// 			m := agtesting.NewMocks()
-// 			m.AgonesClient.AddReactor("list", "gameservers", func(action k8stesting.Action) (bool, runtime.Object, error) {
-// 				return true, &agonesv1.GameServerList{Items: tc.gsList}, nil
-// 			})
+			// For Counters and Lists
+			// m := agtesting.NewMocks()
+			// m.AgonesClient.AddReactor("list", "gameservers", func(action k8stesting.Action) (bool, runtime.Object, error) {
+			// 	return true, &agonesv1.GameServerList{Items: tc.gsList}, nil
+			// })
 
-// 			informer := m.AgonesInformerFactory.Agones().V1()
-// 			_, cancel := agtesting.StartInformers(m,
-// 				informer.GameServers().Informer().HasSynced)
-// 			defer cancel()
+			// informer := m.AgonesInformerFactory.Agones().V1()
+			// _, cancel := agtesting.StartInformers(m,
+			// 	informer.GameServers().Informer().HasSynced)
+			// defer cancel()
 
-// 			replicas, limited, err := applyChainPolicy(*tc.cp, tc.fleet, informer.GameServers().Lister(), nc)
+			_, f := defaultWebhookFixtures()
+			replicas, limited, err := applyChainPolicy(*tc.cp, f, nil, nil)
 
-// 			if tc.want.wantErr {
-// 				assert.NotNil(t, err)
-// 			} else {
-// 				assert.Nil(t, err)
-// 				assert.Equal(t, tc.want.replicas, replicas)
-// 				assert.Equal(t, tc.want.limited, limited)
-// 			}
-// 		})
-// 	}
-// }
+			if tc.want.wantErr {
+				assert.NotNil(t, err)
+			} else {
+				assert.Nil(t, err)
+				assert.Equal(t, tc.want.replicas, replicas)
+				assert.Equal(t, tc.want.limited, limited)
+			}
+		})
+	}
+}
 
 // Parse a time string and return a metav1.Time
 func mustParseMetav1Time(timeStr string) metav1.Time {
