@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -30,8 +31,12 @@ namespace Agones
     /// <summary>
     /// Agones SDK for Unity.
     /// </summary>
-    public class AgonesSdk : MonoBehaviour
+    public class AgonesSdk : MonoBehaviour, IRequestSender
     {
+        /// <summary>
+        /// Handles sending HTTP requests to the Agones sidecar.
+        /// </summary>
+        public IRequestSender requestSender;
         /// <summary>
         /// Interval of the server sending a health ping to the Agones sidecar.
         /// </summary>
@@ -57,6 +62,9 @@ namespace Agones
             public KeyValueMessage(string k, string v) => (key, value) = (k, v);
         }
 
+        private List<WatchGameServerCallback> watchCallbacks = new List<WatchGameServerCallback>();
+        private bool watchingForUpdates = false;
+
         #region Unity Methods
         // Use this for initialization.
         private void Awake()
@@ -67,6 +75,7 @@ namespace Agones
 
         private void Start()
         {
+            requestSender ??= this;
             HealthCheckAsync();
         }
 
@@ -117,7 +126,7 @@ namespace Agones
         /// </returns>
         public async Task<bool> Ready()
         {
-            return await SendRequestAsync("/ready", "{}").ContinueWith(task => task.Result.ok);
+            return await requestSender.SendRequestAsync("/ready", "{}").ContinueWith(task => task.Result.ok);
         }
 
         /// <summary>
@@ -126,7 +135,7 @@ namespace Agones
         /// <returns>The current GameServer configuration</returns>
         public async Task<GameServer> GameServer()
         {
-            var result = await SendRequestAsync("/gameserver", "{}", UnityWebRequest.kHttpVerbGET);
+            var result = await requestSender.SendRequestAsync("/gameserver", "{}", UnityWebRequest.kHttpVerbGET);
             if (!result.ok)
             {
                 return null;
@@ -144,7 +153,7 @@ namespace Agones
         /// </returns>
         public async Task<bool> Shutdown()
         {
-            return await SendRequestAsync("/shutdown", "{}").ContinueWith(task => task.Result.ok);
+            return await requestSender.SendRequestAsync("/shutdown", "{}").ContinueWith(task => task.Result.ok);
         }
 
         /// <summary>
@@ -155,7 +164,7 @@ namespace Agones
         /// </returns>
         public async Task<bool> Allocate()
         {
-            return await SendRequestAsync("/allocate", "{}").ContinueWith(task => task.Result.ok);
+            return await requestSender.SendRequestAsync("/allocate", "{}").ContinueWith(task => task.Result.ok);
         }
 
         /// <summary>
@@ -169,7 +178,7 @@ namespace Agones
         public async Task<bool> SetLabel(string key, string value)
         {
             string json = JsonUtility.ToJson(new KeyValueMessage(key, value));
-            return await SendRequestAsync("/metadata/label", json, UnityWebRequest.kHttpVerbPUT)
+            return await requestSender.SendRequestAsync("/metadata/label", json, UnityWebRequest.kHttpVerbPUT)
                 .ContinueWith(task => task.Result.ok);
         }
 
@@ -184,7 +193,7 @@ namespace Agones
         public async Task<bool> SetAnnotation(string key, string value)
         {
             string json = JsonUtility.ToJson(new KeyValueMessage(key, value));
-            return await SendRequestAsync("/metadata/annotation", json, UnityWebRequest.kHttpVerbPUT)
+            return await requestSender.SendRequestAsync("/metadata/annotation", json, UnityWebRequest.kHttpVerbPUT)
                 .ContinueWith(task => task.Result.ok);
         }
 
@@ -209,7 +218,7 @@ namespace Agones
         public async Task<bool> Reserve(TimeSpan duration)
         {
             string json = JsonUtility.ToJson(new Duration(seconds: duration.Seconds));
-            return await SendRequestAsync("/reserve", json).ContinueWith(task => task.Result.ok);
+            return await requestSender.SendRequestAsync("/reserve", json).ContinueWith(task => task.Result.ok);
         }
 
         /// <summary>
@@ -218,22 +227,44 @@ namespace Agones
         /// </summary>
         /// <param name="gameServer">The GameServer value</param>
         public delegate void WatchGameServerCallback(GameServer gameServer);
-        
+
         /// <summary>
         /// WatchGameServer watches for changes in the backing GameServer configuration.
         /// </summary>
         /// <param name="callback">This callback is executed whenever a GameServer configuration change occurs</param>
         public void WatchGameServer(WatchGameServerCallback callback)
         {
-            var req = new UnityWebRequest(sidecarAddress + "/watch/gameserver", UnityWebRequest.kHttpVerbGET);
-            req.downloadHandler = new GameServerHandler(callback);
-            req.SetRequestHeader("Content-Type", "application/json");
-            req.SendWebRequest();
-            Log("Agones Watch Started");
+            this.watchCallbacks.Add(callback);
+            if (!this.watchingForUpdates)
+            {
+                StartWatchingForUpdates();
+            }
         }
         #endregion
 
         #region AgonesRestClient Private Methods
+
+        private void NotifyWatchUpdates(GameServer gs)
+        {
+            this.watchCallbacks.ForEach((callback) =>
+            {
+                try
+                {
+                    callback(gs);
+                }
+                catch (Exception ignore) { } // Ignore callback exceptions
+            });
+        }
+
+        private void StartWatchingForUpdates()
+        {
+            var req = new UnityWebRequest(sidecarAddress + "/watch/gameserver", UnityWebRequest.kHttpVerbGET);
+            req.downloadHandler = new GameServerHandler(this);
+            req.SetRequestHeader("Content-Type", "application/json");
+            req.SendWebRequest();
+            this.watchingForUpdates = true;
+            Log("Agones Watch Started");
+        }
 
         private async void HealthCheckAsync()
         {
@@ -243,7 +274,7 @@ namespace Agones
 
                 try
                 {
-                    await SendRequestAsync("/health", "{}");
+                    await requestSender.SendRequestAsync("/health", "{}");
                 }
                 catch (ObjectDisposedException)
                 {
@@ -255,13 +286,13 @@ namespace Agones
         /// <summary>
         /// Result of a Async HTTP request
         /// </summary>
-        protected struct AsyncResult
+        public struct AsyncResult
         {
             public bool ok;
             public string json;
         }
 
-        protected async Task<AsyncResult> SendRequestAsync(string api, string json,
+        public async Task<AsyncResult> SendRequestAsync(string api, string json,
             string method = UnityWebRequest.kHttpVerbPOST)
         {
             // To prevent that an async method leaks after destroying this gameObject.
@@ -278,16 +309,16 @@ namespace Agones
 
             var result = new AsyncResult();
 
-            result.ok = req.responseCode == (long) HttpStatusCode.OK;
+            result.ok = req.responseCode == (long)HttpStatusCode.OK;
 
             if (result.ok)
             {
                 result.json = req.downloadHandler.text;
-                Log($"Agones SendRequest ok: {api} {req.downloadHandler.text}");
+                Log($"Agones SendRequest ok: {method} {api} {json} {req.downloadHandler.text}");
             }
             else
             {
-                Log($"Agones SendRequest failed: {api} {req.error}");
+                Log($"Agones SendRequest failed: {method} {api} {json} {req.error}");
             }
 
             req.Dispose();
@@ -359,19 +390,45 @@ namespace Agones
         /// </summary>
         private class GameServerHandler : DownloadHandlerScript
         {
-            private WatchGameServerCallback callback;
-            public GameServerHandler(WatchGameServerCallback callback)
+            private AgonesSdk sdk;
+            private StringBuilder stringBuilder;
+
+            public GameServerHandler(AgonesSdk sdk)
             {
-                this.callback = callback;
+                this.sdk = sdk;
+                this.stringBuilder = new StringBuilder();
             }
 
             protected override bool ReceiveData(byte[] data, int dataLength)
             {
-                string json = Encoding.UTF8.GetString(data);
-                var dictionary = (Dictionary<string, object>) Json.Deserialize(json);
-                var gameServer = new GameServer(dictionary["result"] as Dictionary<string, object>);
-                this.callback(gameServer);
+                string dataString = Encoding.UTF8.GetString(data);
+                this.stringBuilder.Append(dataString);
+
+                string bufferString = stringBuilder.ToString();
+                int newlineIndex;
+
+                while ((newlineIndex = bufferString.IndexOf('\n')) >= 0)
+                {
+                    string fullLine = bufferString.Substring(0, newlineIndex);
+                    try
+                    {
+                        var dictionary = (Dictionary<string, object>)Json.Deserialize(fullLine);
+                        var gameServer = new GameServer(dictionary["result"] as Dictionary<string, object>);
+                        this.sdk.NotifyWatchUpdates(gameServer);
+                    }
+                    catch (Exception ignore) { } // Ignore parse errors
+                    bufferString = bufferString.Substring(newlineIndex + 1);
+                }
+
+                stringBuilder.Clear();
+                stringBuilder.Append(bufferString);
                 return true;
+            }
+
+            protected override void CompleteContent()
+            {
+                base.CompleteContent();
+                this.sdk.StartWatchingForUpdates();
             }
         }
         #endregion

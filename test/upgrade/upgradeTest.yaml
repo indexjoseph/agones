@@ -1,0 +1,54 @@
+# Copyright 2024 Google LLC All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: upgrade-test-runner
+  labels:
+    app: upgrade-test-runner
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 100
+  template:
+    spec:
+      containers:
+        - name: upgrade-test-controller
+          # TODO: Update image name to use a templated value for current Dev version
+          image: us-docker.pkg.dev/agones-images/ci/upgrade-test-controller:1.44.0-dev
+          imagePullPolicy: Always
+          env:
+            - name: PodName
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: PodNamespace
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          envFrom:
+            - configMapRef:
+                name: version-map
+          volumeMounts:
+            - name: gs-volume
+              mountPath: gameserver.yaml
+              subPath: "gameserver.yaml"
+      volumes:
+        - name: gs-volume
+          configMap:
+            name: gameserver-template
+      priorityClassName: high-priority
+      restartPolicy: Never
+      serviceAccountName: agones-sa

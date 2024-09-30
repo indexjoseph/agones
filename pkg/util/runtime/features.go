@@ -31,12 +31,12 @@ const (
 	////////////////
 	// Beta features
 
+	// FeatureAutopilotPassthroughPort is a feature flag that enables/disables Passthrough Port Policy.
+	FeatureAutopilotPassthroughPort Feature = "AutopilotPassthroughPort"
+
 	// FeatureCountsAndLists is a feature flag that enables counts and lists feature
 	// (a generic implenetation of the player tracking feature).
 	FeatureCountsAndLists Feature = "CountsAndLists"
-
-	////////////////
-	// Alpha features
 
 	// FeatureDisableResyncOnSDKServer is a feature flag to enable/disable resync on SDK server.
 	FeatureDisableResyncOnSDKServer Feature = "DisableResyncOnSDKServer"
@@ -55,20 +55,20 @@ const (
 	// FeaturePlayerTracking is a feature flag to enable/disable player tracking features.
 	FeaturePlayerTracking Feature = "PlayerTracking"
 
-	// FeatureRollingUpdateFix is a feature flag to enable/disable fleet controller fixes.
-	FeatureRollingUpdateFix Feature = "RollingUpdateFix"
-
 	// FeaturePortRanges is a feature flag to enable/disable specific port ranges.
 	FeaturePortRanges Feature = "PortRanges"
 
 	// FeaturePortPolicyNone is a feature flag to allow setting Port Policy to None.
 	FeaturePortPolicyNone Feature = "PortPolicyNone"
 
+	// FeatureRollingUpdateFix is a feature flag to enable/disable fleet controller fixes.
+	FeatureRollingUpdateFix Feature = "RollingUpdateFix"
+
+	// FeatureScheduledAutoscaler is a feature flag to enable/disable scheduled fleet autoscaling.
+	FeatureScheduledAutoscaler Feature = "ScheduledAutoscaler"
+
 	////////////////
 	// Dev features
-
-	// FeatureAutopilotPassthroughPort is a feature flag that enables/disables Passthrough Port Policy.
-	FeatureAutopilotPassthroughPort Feature = "PassthroughPortPolicy"
 
 	////////////////
 	// Example feature
@@ -128,6 +128,7 @@ var (
 	// In each of these, keep the feature sorted by descending maturity then alphabetical
 	featureDefaults = map[Feature]bool{
 		// Beta features
+		FeatureAutopilotPassthroughPort: true,
 		FeatureCountsAndLists:           true,
 		FeatureDisableResyncOnSDKServer: true,
 
@@ -138,9 +139,9 @@ var (
 		FeatureRollingUpdateFix:                 false,
 		FeaturePortRanges:                       false,
 		FeaturePortPolicyNone:                   false,
+		FeatureScheduledAutoscaler:              false,
 
 		// Dev features
-		FeatureAutopilotPassthroughPort: false,
 
 		// Example feature
 		FeatureExample: false,

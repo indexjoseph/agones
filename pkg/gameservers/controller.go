@@ -56,12 +56,14 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
+	"k8s.io/utils/ptr"
 )
 
 const (
-	sdkserverSidecarName = "agones-gameserver-sidecar"
-	grpcPortEnvVar       = "AGONES_SDK_GRPC_PORT"
-	httpPortEnvVar       = "AGONES_SDK_HTTP_PORT"
+	sdkserverSidecarName  = "agones-gameserver-sidecar"
+	grpcPortEnvVar        = "AGONES_SDK_GRPC_PORT"
+	httpPortEnvVar        = "AGONES_SDK_HTTP_PORT"
+	passthroughPortEnvVar = "PASSTHROUGH"
 )
 
 // Extensions struct contains what is needed to bind webhook handlers
@@ -82,6 +84,7 @@ type Controller struct {
 	sidecarCPULimit        resource.Quantity
 	sidecarMemoryRequest   resource.Quantity
 	sidecarMemoryLimit     resource.Quantity
+	sidecarRunAsUser       int
 	sdkServiceAccount      string
 	crdGetter              apiextclientv1.CustomResourceDefinitionInterface
 	podGetter              typedcorev1.PodsGetter
@@ -113,6 +116,7 @@ func NewController(
 	sidecarCPULimit resource.Quantity,
 	sidecarMemoryRequest resource.Quantity,
 	sidecarMemoryLimit resource.Quantity,
+	sidecarRunAsUser int,
 	sdkServiceAccount string,
 	kubeClient kubernetes.Interface,
 	kubeInformerFactory informers.SharedInformerFactory,
@@ -132,6 +136,7 @@ func NewController(
 		sidecarCPURequest:      sidecarCPURequest,
 		sidecarMemoryLimit:     sidecarMemoryLimit,
 		sidecarMemoryRequest:   sidecarMemoryRequest,
+		sidecarRunAsUser:       sidecarRunAsUser,
 		alwaysPullSidecarImage: alwaysPullSidecarImage,
 		sdkServiceAccount:      sdkServiceAccount,
 		crdGetter:              extClient.ApiextensionsV1().CustomResourceDefinitions(),
@@ -211,6 +216,9 @@ func NewExtensions(apiHooks agonesv1.APIHooks, wh *webhooks.WebHook) *Extensions
 	wh.AddHandler("/mutate", agonesv1.Kind("GameServer"), admissionv1.Create, ext.creationMutationHandler)
 	wh.AddHandler("/validate", agonesv1.Kind("GameServer"), admissionv1.Create, ext.creationValidationHandler)
 
+	if runtime.FeatureEnabled(runtime.FeatureAutopilotPassthroughPort) {
+		wh.AddHandler("/mutate", corev1.SchemeGroupVersion.WithKind("Pod").GroupKind(), admissionv1.Create, ext.creationMutationHandlerPod)
+	}
 	return ext
 }
 
@@ -313,6 +321,59 @@ func (ext *Extensions) creationValidationHandler(review admissionv1.AdmissionRev
 		review.Response.Result = &statusErr.ErrStatus
 		loggerForGameServer(gs, ext.baseLogger).WithField("review", review).Debug("Invalid GameServer")
 	}
+	return review, nil
+}
+
+// creationMutationHandlerPod that mutates a GameServer pod when it is created
+// Should only be called on gameserver pod create operations.
+func (ext *Extensions) creationMutationHandlerPod(review admissionv1.AdmissionReview) (admissionv1.AdmissionReview, error) {
+	obj := review.Request.Object
+	pod := &corev1.Pod{}
+	err := json.Unmarshal(obj.Raw, pod)
+	if err != nil {
+		// If the JSON is invalid during mutation, fall through to validation. This allows OpenAPI schema validation
+		// to proceed, resulting in a more user friendly error message.
+		return review, nil
+	}
+
+	ext.baseLogger.WithField("pod.Name", pod.Name).Debug("creationMutationHandlerPod")
+
+	annotation, ok := pod.ObjectMeta.Annotations[agonesv1.PassthroughPortAssignmentAnnotation]
+	if !ok {
+		ext.baseLogger.WithField("pod.Name", pod.Name).Info("the agones.dev/container-passthrough-port-assignment annotation is empty and it's unexpected")
+		return review, nil
+	}
+
+	passthroughPortAssignmentMap := make(map[string][]int)
+	if err := json.Unmarshal([]byte(annotation), &passthroughPortAssignmentMap); err != nil {
+		return review, errors.Wrapf(err, "could not unmarshal annotation %q (value %q)", passthroughPortAssignmentMap, annotation)
+	}
+
+	for _, container := range pod.Spec.Containers {
+		for _, portIdx := range passthroughPortAssignmentMap[container.Name] {
+			container.Ports[portIdx].ContainerPort = container.Ports[portIdx].HostPort
+		}
+	}
+
+	newPod, err := json.Marshal(pod)
+	if err != nil {
+		return review, errors.Wrapf(err, "error marshalling changes applied Pod %s to json", pod.ObjectMeta.Name)
+	}
+
+	patch, err := jsonpatch.CreatePatch(obj.Raw, newPod)
+	if err != nil {
+		return review, errors.Wrapf(err, "error creating patch for Pod %s", pod.ObjectMeta.Name)
+	}
+
+	jsonPatch, err := json.Marshal(patch)
+	if err != nil {
+		return review, errors.Wrapf(err, "error creating json for patch for Pod %s", pod.ObjectMeta.Name)
+	}
+
+	pt := admissionv1.PatchTypeJSONPatch
+	review.Response.PatchType = &pt
+	review.Response.Patch = jsonPatch
+
 	return review, nil
 }
 
@@ -706,6 +767,13 @@ func (c *Controller) sidecar(gs *agonesv1.GameServer) corev1.Container {
 	if c.alwaysPullSidecarImage {
 		sidecar.ImagePullPolicy = corev1.PullAlways
 	}
+
+	sidecar.SecurityContext = &corev1.SecurityContext{
+		AllowPrivilegeEscalation: ptr.To(false),
+		RunAsNonRoot:             ptr.To(true),
+		RunAsUser:                ptr.To(int64(c.sidecarRunAsUser)),
+	}
+
 	return sidecar
 }
 
@@ -810,19 +878,19 @@ func (c *Controller) syncGameServerStartingState(ctx context.Context, gs *agones
 	if err != nil {
 		// expected to happen, so don't log it.
 		if k8serrors.IsNotFound(err) {
-			return nil, workerqueue.NewDebugError(err)
+			return nil, workerqueue.NewTraceError(err)
 		}
 
 		// do log if it's something other than NotFound, since that's weird.
 		return nil, err
 	}
 	if pod.Spec.NodeName == "" {
-		return gs, workerqueue.NewDebugError(errors.Errorf("node not yet populated for Pod %s", pod.ObjectMeta.Name))
+		return gs, workerqueue.NewTraceError(errors.Errorf("node not yet populated for Pod %s", pod.ObjectMeta.Name))
 	}
 
 	// Ensure the pod IPs are populated
 	if pod.Status.PodIPs == nil || len(pod.Status.PodIPs) == 0 {
-		return gs, workerqueue.NewDebugError(errors.Errorf("pod IPs not yet populated for Pod %s", pod.ObjectMeta.Name))
+		return gs, workerqueue.NewTraceError(errors.Errorf("pod IPs not yet populated for Pod %s", pod.ObjectMeta.Name))
 	}
 
 	node, err := c.nodeLister.Get(pod.Spec.NodeName)
@@ -875,7 +943,7 @@ func (c *Controller) syncGameServerRequestReadyState(ctx context.Context, gs *ag
 	if gs.Status.NodeName == "" {
 		addressPopulated = true
 		if pod.Spec.NodeName == "" {
-			return gs, workerqueue.NewDebugError(errors.Errorf("node not yet populated for Pod %s", pod.ObjectMeta.Name))
+			return gs, workerqueue.NewTraceError(errors.Errorf("node not yet populated for Pod %s", pod.ObjectMeta.Name))
 		}
 		node, err := c.nodeLister.Get(pod.Spec.NodeName)
 		if err != nil {
@@ -895,7 +963,7 @@ func (c *Controller) syncGameServerRequestReadyState(ctx context.Context, gs *ag
 				// check to make sure this container is actually running. If there was a recent crash, the cache may
 				// not yet have the newer, running container.
 				if cs.State.Running == nil {
-					return nil, workerqueue.NewDebugError(fmt.Errorf("game server container for GameServer %s in namespace %s is not currently running, try again", gsCopy.ObjectMeta.Name, gsCopy.ObjectMeta.Namespace))
+					return nil, workerqueue.NewTraceError(fmt.Errorf("game server container for GameServer %s in namespace %s is not currently running, try again", gsCopy.ObjectMeta.Name, gsCopy.ObjectMeta.Namespace))
 				}
 				gsCopy.ObjectMeta.Annotations[agonesv1.GameServerReadyContainerIDAnnotation] = cs.ContainerID
 			}
@@ -904,7 +972,7 @@ func (c *Controller) syncGameServerRequestReadyState(ctx context.Context, gs *ag
 	}
 	// Verify that we found the game server container - we may have a stale cache where pod is missing ContainerStatuses.
 	if _, ok := gsCopy.ObjectMeta.Annotations[agonesv1.GameServerReadyContainerIDAnnotation]; !ok {
-		return nil, workerqueue.NewDebugError(fmt.Errorf("game server container for GameServer %s in namespace %s not present in pod status, try again", gsCopy.ObjectMeta.Name, gsCopy.ObjectMeta.Namespace))
+		return nil, workerqueue.NewTraceError(fmt.Errorf("game server container for GameServer %s in namespace %s not present in pod status, try again", gsCopy.ObjectMeta.Name, gsCopy.ObjectMeta.Namespace))
 	}
 
 	// Also update the pod with the same annotation, so we can check if the Pod data is up-to-date, now and also in the HealthController.

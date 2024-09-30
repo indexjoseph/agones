@@ -51,12 +51,14 @@ import (
 )
 
 const (
-	ipFixture       = "12.12.12.12"
-	ipv6Fixture     = "2001:0db8:85a3:0000:0000:8a2e:0370:7334"
-	nodeFixtureName = "node1"
+	ipFixture        = "12.12.12.12"
+	ipv6Fixture      = "2001:0db8:85a3:0000:0000:8a2e:0370:7334"
+	nodeFixtureName  = "node1"
+	sidecarRunAsUser = 1000
 )
 
 var GameServerKind = metav1.GroupVersionKind(agonesv1.SchemeGroupVersion.WithKind("GameServer"))
+var PodKind = corev1.SchemeGroupVersion.WithKind("Pod")
 
 func TestControllerSyncGameServer(t *testing.T) {
 	t.Parallel()
@@ -577,6 +579,58 @@ func TestControllerCreationValidationHandler(t *testing.T) {
 		if assert.Error(t, err) {
 			assert.Equal(t, `error unmarshalling GameServer json after schema validation: "WRONG DATA": json: cannot unmarshal string into Go value of type v1.GameServer`, err.Error())
 		}
+	})
+}
+
+func TestControllerCreationMutationHandlerPod(t *testing.T) {
+	t.Parallel()
+	ext := newFakeExtensions()
+
+	type expected struct {
+		patches []jsonpatch.JsonPatchOperation
+	}
+
+	t.Run("valid pod mutation for Passthrough portPolicy, containerPort should be the same as hostPort", func(t *testing.T) {
+		gameServerHostPort0 := float64(newPassthroughPortSingleContainerSpec().Spec.Containers[1].Ports[0].HostPort)
+		gameServerHostPort2 := float64(newPassthroughPortSingleContainerSpec().Spec.Containers[1].Ports[1].HostPort)
+		gameServerHostPort3 := float64(newPassthroughPortSingleContainerSpec().Spec.Containers[2].Ports[0].HostPort)
+		fixture := newPassthroughPortSingleContainerSpec()
+		raw, err := json.Marshal(fixture)
+		require.NoError(t, err)
+		review := admissionv1.AdmissionReview{
+			Request: &admissionv1.AdmissionRequest{
+				Kind:      metav1.GroupVersionKind(PodKind),
+				Operation: admissionv1.Create,
+				Object: runtime.RawExtension{
+					Raw: raw,
+				},
+			},
+			Response: &admissionv1.AdmissionResponse{Allowed: true},
+		}
+		expected := expected{
+			patches: []jsonpatch.JsonPatchOperation{
+				{Operation: "replace", Path: "/spec/containers/1/ports/0/containerPort", Value: gameServerHostPort0},
+				{Operation: "replace", Path: "/spec/containers/1/ports/1/containerPort", Value: gameServerHostPort2},
+				{Operation: "replace", Path: "/spec/containers/2/ports/0/containerPort", Value: gameServerHostPort3}},
+		}
+
+		result, err := ext.creationMutationHandlerPod(review)
+		assert.NoError(t, err)
+		patch := &jsonpatch.ByPath{}
+		err = json.Unmarshal(result.Response.Patch, patch)
+		found := false
+
+		for _, expected := range expected.patches {
+			for _, p := range *patch {
+				if assert.ObjectsAreEqual(p, expected) {
+					found = true
+				}
+			}
+			assert.True(t, found, "Could not find operation %#v in patch %v", expected, *patch)
+		}
+
+		require.NoError(t, err)
+
 	})
 }
 
@@ -1253,6 +1307,9 @@ func TestControllerCreateGameServerPod(t *testing.T) {
 			assert.Equal(t, "FEATURE_GATES", sidecarContainer.Env[2].Name)
 			assert.Equal(t, "LOG_LEVEL", sidecarContainer.Env[3].Name)
 			assert.Equal(t, string(fixture.Spec.SdkServer.LogLevel), sidecarContainer.Env[3].Value)
+			assert.Equal(t, *sidecarContainer.SecurityContext.AllowPrivilegeEscalation, false)
+			assert.Equal(t, *sidecarContainer.SecurityContext.RunAsNonRoot, true)
+			assert.Equal(t, *sidecarContainer.SecurityContext.RunAsUser, int64(sidecarRunAsUser))
 
 			gsContainer := pod.Spec.Containers[1]
 			assert.Equal(t, fixture.Spec.Ports[0].HostPort, gsContainer.Ports[0].HostPort)
@@ -2204,7 +2261,7 @@ func newFakeController() (*Controller, agtesting.Mocks) {
 		map[string]portallocator.PortRange{agonesv1.DefaultPortRange: {MinPort: 10, MaxPort: 20}},
 		"sidecar:dev", false,
 		resource.MustParse("0.05"), resource.MustParse("0.1"),
-		resource.MustParse("50Mi"), resource.MustParse("100Mi"), "sdk-service-account",
+		resource.MustParse("50Mi"), resource.MustParse("100Mi"), sidecarRunAsUser, "sdk-service-account",
 		m.KubeClient, m.KubeInformerFactory, m.ExtClient, m.AgonesClient, m.AgonesInformerFactory)
 	c.recorder = m.FakeRecorder
 	return c, m
@@ -2222,6 +2279,36 @@ func newSingleContainerSpec() agonesv1.GameServerSpec {
 			Spec: corev1.PodSpec{
 				Containers: []corev1.Container{{Name: "container", Image: "container/image"}},
 			},
+		},
+	}
+}
+
+// Assume container ports 0 and 1 are Passthrough ports for "example-server" container and container port 0 for "example-server-two"
+// The annotation would look like autopilot.gke.io/passthrough-port-assignment: '{"example-server":["0","1"], "example-server-two":[0]}'
+func newPassthroughPortSingleContainerSpec() corev1.Pod {
+	passthroughContainerPortMap := "{\"example-server\":[0,1],\"example-server-two\":[0]}"
+	return corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{agonesv1.PassthroughPortAssignmentAnnotation: passthroughContainerPortMap},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "agones-gameserver-sidecar",
+					Image: "container/image",
+					Env:   []corev1.EnvVar{{Name: passthroughPortEnvVar, Value: "TRUE"}}},
+				{Name: "example-server",
+					Image: "container2/image",
+					Ports: []corev1.ContainerPort{
+						{HostPort: 7777, ContainerPort: 5555},
+						{HostPort: 7776, ContainerPort: 7797},
+						{HostPort: 7775, ContainerPort: 7793}},
+					Env: []corev1.EnvVar{{Name: passthroughPortEnvVar, Value: "TRUE"}}},
+				{Name: "example-server-two",
+					Image: "container3/image",
+					Ports: []corev1.ContainerPort{
+						{HostPort: 7745, ContainerPort: 7983},
+						{HostPort: 7312, ContainerPort: 7364}},
+					Env: []corev1.EnvVar{{Name: passthroughPortEnvVar, Value: "TRUE"}}}},
 		},
 	}
 }

@@ -26,6 +26,16 @@ import (
 	"sync"
 	"time"
 
+	"agones.dev/agones/pkg"
+	"agones.dev/agones/pkg/allocation/converters"
+	pb "agones.dev/agones/pkg/allocation/go"
+	allocationv1 "agones.dev/agones/pkg/apis/allocation/v1"
+	"agones.dev/agones/pkg/client/clientset/versioned"
+	"agones.dev/agones/pkg/client/informers/externalversions"
+	"agones.dev/agones/pkg/gameserverallocations"
+	"agones.dev/agones/pkg/gameservers"
+	"agones.dev/agones/pkg/metrics"
+	"agones.dev/agones/pkg/util/fswatch"
 	"github.com/heptiolabs/healthcheck"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -35,6 +45,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	grpchealth "google.golang.org/grpc/health"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -43,15 +55,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
-	"agones.dev/agones/pkg"
-	"agones.dev/agones/pkg/allocation/converters"
-	pb "agones.dev/agones/pkg/allocation/go"
-	allocationv1 "agones.dev/agones/pkg/apis/allocation/v1"
-	"agones.dev/agones/pkg/client/clientset/versioned"
-	"agones.dev/agones/pkg/client/informers/externalversions"
-	"agones.dev/agones/pkg/gameserverallocations"
-	"agones.dev/agones/pkg/gameservers"
-	"agones.dev/agones/pkg/util/fswatch"
+	"agones.dev/agones/pkg/util/httpserver"
 	"agones.dev/agones/pkg/util/runtime"
 	"agones.dev/agones/pkg/util/signals"
 )
@@ -214,23 +218,32 @@ func main() {
 	if !validPort(conf.GRPCPort) && !validPort(conf.HTTPPort) {
 		logger.WithField("grpc-port", conf.GRPCPort).WithField("http-port", conf.HTTPPort).Fatal("Must specify a valid gRPC port or an HTTP port for the allocator service")
 	}
+	healthserver := &httpserver.Server{Logger: logger}
+	var health healthcheck.Handler
 
-	health, closer := setupMetricsRecorder(conf)
+	metricsConf := metrics.Config{
+		Stackdriver:       conf.Stackdriver,
+		PrometheusMetrics: conf.PrometheusMetrics,
+		GCPProjectID:      conf.GCPProjectID,
+		StackdriverLabels: conf.StackdriverLabels,
+	}
+	health, closer := metrics.SetupMetrics(metricsConf, healthserver)
 	defer closer()
 
-	// http.DefaultServerMux is used for http connection, not for https
-	http.Handle("/", health)
+	metrics.SetReportingPeriod(conf.PrometheusMetrics, conf.Stackdriver)
 
 	kubeClient, agonesClient, err := getClients(conf)
 	if err != nil {
 		logger.WithError(err).Fatal("could not create clients")
 	}
 
+	listenCtx, cancelListenCtx := context.WithCancel(context.Background())
+
 	// This will test the connection to agones on each readiness probe
 	// so if one of the allocator pod can't reach Kubernetes it will be removed
 	// from the Kubernetes service.
-	ctx, cancelCtx := context.WithCancel(context.Background())
 	podReady = true
+	grpcHealth := grpchealth.NewServer() // only used for gRPC, ignored o/w
 	health.AddReadinessCheck("allocator-agones-client", func() error {
 		if !podReady {
 			return errors.New("asked to shut down, failed readiness check")
@@ -245,15 +258,15 @@ func main() {
 	signals.NewSigTermHandler(func() {
 		logger.Info("Pod shutdown has been requested, failing readiness check")
 		podReady = false
+		grpcHealth.Shutdown()
 		time.Sleep(conf.ReadinessShutdownDuration)
-		cancelCtx()
-		logger.Infof("Readiness shutdown duration has passed, exiting pod")
-		os.Exit(0)
+		cancelListenCtx()
 	})
 
 	grpcUnallocatedStatusCode := grpcCodeFromHTTPStatus(conf.httpUnallocatedStatusCode)
 
-	h := newServiceHandler(ctx, kubeClient, agonesClient, health, conf.MTLSDisabled, conf.TLSDisabled, conf.remoteAllocationTimeout, conf.totalRemoteAllocationTimeout, conf.allocationBatchWaitTime, grpcUnallocatedStatusCode)
+	workerCtx, cancelWorkerCtx := context.WithCancel(context.Background())
+	h := newServiceHandler(workerCtx, kubeClient, agonesClient, health, conf.MTLSDisabled, conf.TLSDisabled, conf.remoteAllocationTimeout, conf.totalRemoteAllocationTimeout, conf.allocationBatchWaitTime, grpcUnallocatedStatusCode)
 
 	if !h.tlsDisabled {
 		cancelTLS, err := fswatch.Watch(logger, tlsDir, time.Second, func() {
@@ -293,21 +306,30 @@ func main() {
 
 	// If grpc and http use the same port then use a mux.
 	if conf.GRPCPort == conf.HTTPPort {
-		runMux(h, conf.HTTPPort)
+		runMux(listenCtx, workerCtx, h, grpcHealth, conf.HTTPPort)
 	} else {
 		// Otherwise, run each on a dedicated port.
 		if validPort(conf.HTTPPort) {
-			runREST(h, conf.HTTPPort)
+			runREST(listenCtx, workerCtx, h, conf.HTTPPort)
 		}
 		if validPort(conf.GRPCPort) {
-			runGRPC(h, conf.GRPCPort)
+			runGRPC(listenCtx, h, grpcHealth, conf.GRPCPort)
 		}
 	}
 
-	// Finally listen on 8080 (http) and block the main goroutine
-	// this is used to serve /live and /ready handlers for Kubernetes probes.
-	err = http.ListenAndServe(":8080", http.DefaultServeMux)
-	logger.WithError(err).Fatal("allocation service crashed")
+	// Finally listen on 8080 (http), used to serve /live and /ready handlers for Kubernetes probes.
+	healthserver.Handle("/", health)
+	go func() { _ = healthserver.Run(listenCtx, 0) }()
+
+	// TODO: This is messy. Contexts are the wrong way to handle this - we should be using shutdown,
+	// and a cascading graceful shutdown instead of multiple contexts and sleeps.
+	<-listenCtx.Done()
+	logger.Infof("Listen context cancelled")
+	time.Sleep(5 * time.Second)
+	cancelWorkerCtx()
+	logger.Infof("Worker context cancelled")
+	time.Sleep(1 * time.Second)
+	logger.Info("Shut down allocator")
 }
 
 func validPort(port int) bool {
@@ -315,29 +337,30 @@ func validPort(port int) bool {
 	return port >= 0 && port < maxPort
 }
 
-func runMux(h *serviceHandler, httpPort int) {
+func runMux(listenCtx context.Context, workerCtx context.Context, h *serviceHandler, grpcHealth *grpchealth.Server, httpPort int) {
 	logger.Infof("Running the mux handler on port %d", httpPort)
 	grpcServer := grpc.NewServer(h.getMuxServerOptions()...)
 	pb.RegisterAllocationServiceServer(grpcServer, h)
+	grpc_health_v1.RegisterHealthServer(grpcServer, grpcHealth)
 
 	mux := runtime.NewServerMux()
 	if err := pb.RegisterAllocationServiceHandlerServer(context.Background(), mux, h); err != nil {
 		panic(err)
 	}
 
-	runHTTP(h, httpPort, grpcHandlerFunc(grpcServer, mux))
+	runHTTP(listenCtx, workerCtx, h, httpPort, grpcHandlerFunc(grpcServer, mux))
 }
 
-func runREST(h *serviceHandler, httpPort int) {
+func runREST(listenCtx context.Context, workerCtx context.Context, h *serviceHandler, httpPort int) {
 	logger.WithField("port", httpPort).Info("Running the rest handler")
 	mux := runtime.NewServerMux()
 	if err := pb.RegisterAllocationServiceHandlerServer(context.Background(), mux, h); err != nil {
 		panic(err)
 	}
-	runHTTP(h, httpPort, mux)
+	runHTTP(listenCtx, workerCtx, h, httpPort, mux)
 }
 
-func runHTTP(h *serviceHandler, httpPort int, handler http.Handler) {
+func runHTTP(listenCtx context.Context, workerCtx context.Context, h *serviceHandler, httpPort int, handler http.Handler) {
 	cfg := &tls.Config{}
 	if !h.tlsDisabled {
 		cfg.GetCertificate = h.getTLSCert
@@ -355,6 +378,11 @@ func runHTTP(h *serviceHandler, httpPort int, handler http.Handler) {
 	}
 
 	go func() {
+		go func() {
+			<-listenCtx.Done()
+			_ = server.Shutdown(workerCtx)
+		}()
+
 		var err error
 		if !h.tlsDisabled {
 			err = server.ListenAndServeTLS("", "")
@@ -362,14 +390,17 @@ func runHTTP(h *serviceHandler, httpPort int, handler http.Handler) {
 			err = server.ListenAndServe()
 		}
 
-		if err != nil {
+		if err == http.ErrServerClosed {
+			logger.WithError(err).Info("HTTP/HTTPS server closed")
+			os.Exit(0)
+		} else {
 			logger.WithError(err).Fatal("Unable to start HTTP/HTTPS listener")
 			os.Exit(1)
 		}
 	}()
 }
 
-func runGRPC(h *serviceHandler, grpcPort int) {
+func runGRPC(ctx context.Context, h *serviceHandler, grpcHealth *grpchealth.Server, grpcPort int) {
 	logger.WithField("port", grpcPort).Info("Running the grpc handler on port")
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", grpcPort))
 	if err != nil {
@@ -379,11 +410,22 @@ func runGRPC(h *serviceHandler, grpcPort int) {
 
 	grpcServer := grpc.NewServer(h.getGRPCServerOptions()...)
 	pb.RegisterAllocationServiceServer(grpcServer, h)
+	grpc_health_v1.RegisterHealthServer(grpcServer, grpcHealth)
 
 	go func() {
+		go func() {
+			<-ctx.Done()
+			grpcServer.GracefulStop()
+		}()
+
 		err := grpcServer.Serve(listener)
-		logger.WithError(err).Fatal("allocation service crashed")
-		os.Exit(1)
+		if err != nil {
+			logger.WithError(err).Fatal("allocation service crashed")
+			os.Exit(1)
+		} else {
+			logger.Info("allocation server closed")
+			os.Exit(0)
+		}
 	}()
 }
 

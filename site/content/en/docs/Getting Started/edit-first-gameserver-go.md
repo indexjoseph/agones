@@ -27,16 +27,16 @@ Also complete the "Enabling creation of RBAC resources" and "Installing Agones" 
 ### Modify the simple-game-server example source code
 Modify the {{< ghlink href="examples/simple-game-server/main.go" >}}main.go{{< /ghlink >}} file. For example:
 
-Change the following line in `main.go`:
+Change the following line in function `udpReadWriteLoop` in file `main.go`:
 
 From:
 ```go
-response = "ACK TCP: " + response + "\n"
+response = "ACK: " + response + "\n"
 ```
 
 To:
 ```go
-response = "ACK TCP Echo Says: " + response + "\n"
+response = "ACK Echo Says: " + response + "\n"
 ```
 
 ### Build Server
@@ -87,6 +87,24 @@ kubectl create -f gameserver.yaml
 kubectl apply -f gameserver.yaml
 ```
 
+{{< alert title="Note" color="info">}}
+If you changed `main.go` again and want to apply the changes to the new game servers, then you also need 
+to modify the `gamerserver.yaml` file's
+[`imagePullPolicy`](https://kubernetes.io/docs/concepts/containers/images/#updating-images) to be `Always`,
+or the node may use a cached copy of the image, which doesn't have the new changes.
+
+  ```yaml
+  spec:
+  containers:
+  - name: simple-game-server
+    image: ${REGISTRY}/simple-game-server:${TAG}
+    imagePullPolicy: Always
+  ```
+
+Alternatively, you can also manually increment the `version` field in the `Makefile` file and change the `TAG`
+variable accordingly.
+{{< /alert >}}
+
 ### Check the GameServer Status
 ```bash
 kubectl describe gameserver
@@ -110,7 +128,7 @@ If you do not have netcat installed
 ```
 nc -u {IP} {PORT}
 Hello World!
-ACK TCP:  Echo says  Hello World!
+ACK Echo Says:  Hello World!
 EXIT
 ```
 

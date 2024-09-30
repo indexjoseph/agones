@@ -103,6 +103,10 @@ spec:
       - name: agones-controller
         image: "{{ .Values.agones.image.registry }}/{{ .Values.agones.image.controller.name}}:{{ default .Values.agones.image.tag .Values.agones.image.controller.tag }}"
         imagePullPolicy: {{ .Values.agones.image.controller.pullPolicy }}
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
         env:
         # minimum port that can be exposed to GameServer traffic
         - name: MIN_PORT
@@ -130,6 +134,8 @@ spec:
           value: {{ .Values.agones.image.sdk.memoryRequest | quote }}
         - name: SIDECAR_MEMORY_LIMIT
           value: {{ .Values.agones.image.sdk.memoryLimit | quote }}
+        - name: SIDECAR_RUN_AS_USER
+          value: "1000"
         - name: SDK_SERVICE_ACCOUNT
           value: {{ .Values.agones.serviceaccount.sdk.name | quote }}
         - name: PROMETHEUS_EXPORTER
@@ -142,6 +148,16 @@ spec:
           value: {{ .Values.agones.metrics.stackdriverProjectID | quote }}
         - name: NUM_WORKERS
           value: {{ .Values.agones.controller.numWorkers | quote }}
+        - name: MAX_CREATION_PARALLELISM
+          value: {{ .Values.agones.controller.maxCreationParallelism | quote }}
+        - name: MAX_GAME_SERVER_CREATIONS_PER_BATCH
+          value: {{ .Values.agones.controller.maxGameServerCreationsPerBatch | quote }}
+        - name: MAX_DELETION_PARALLELISM
+          value: {{ .Values.agones.controller.maxDeletionParallelism | quote }}
+        - name: MAX_GAME_SERVER_DELETIONS_PER_BATCH
+          value: {{ .Values.agones.controller.maxGameServerDeletionsPerBatch | quote }}
+        - name: MAX_POD_PENDING_COUNT
+          value: {{ .Values.agones.controller.maxPodPendingCount | quote }}
         - name: API_SERVER_QPS
           value: {{ .Values.agones.controller.apiServerQPS | quote }}
         - name: API_SERVER_QPS_BURST

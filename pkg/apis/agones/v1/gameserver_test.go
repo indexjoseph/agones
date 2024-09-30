@@ -140,32 +140,6 @@ func TestIsBeingDeleted(t *testing.T) {
 	}
 }
 
-func TestGameServerFindGameServerContainer(t *testing.T) {
-	t.Parallel()
-
-	fixture := corev1.Container{Name: "mycontainer", Image: "foo/mycontainer"}
-	gs := &GameServer{
-		Spec: GameServerSpec{
-			Container: "mycontainer",
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{
-						fixture,
-						{Name: "notmycontainer", Image: "foo/notmycontainer"},
-					},
-				},
-			},
-		},
-	}
-
-	i, container, err := gs.FindGameServerContainer()
-	assert.Nil(t, err)
-	assert.Equal(t, fixture, container)
-	container.Ports = append(container.Ports, corev1.ContainerPort{HostPort: 1234})
-	gs.Spec.Template.Spec.Containers[i] = container
-	assert.Equal(t, gs.Spec.Template.Spec.Containers[0], container)
-}
-
 func TestGameServerApplyDefaults(t *testing.T) {
 	t.Parallel()
 
@@ -1282,6 +1256,52 @@ func TestGameServerValidateFeatures(t *testing.T) {
 				},
 			},
 		},
+		{
+			description: "PortPolicyNone is disabled, PortPolicy field set to None",
+			feature:     fmt.Sprintf("%s=false", runtime.FeaturePortPolicyNone),
+			gs: GameServer{
+				Spec: GameServerSpec{
+					Ports: []GameServerPort{
+						{
+							Name:          "main",
+							ContainerPort: 7777,
+							PortPolicy:    None,
+						},
+					},
+					Container: "testing",
+					Lists:     map[string]ListStatus{},
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "testing", Image: "testing/image"}}},
+					},
+				},
+			},
+			want: field.ErrorList{
+				field.Forbidden(
+					field.NewPath("spec.ports[0].portPolicy"),
+					"Value cannot be set to None unless feature flag PortPolicyNone is enabled",
+				),
+			},
+		},
+		{
+			description: "PortPolicyNone is enabled, PortPolicy field set to None",
+			feature:     fmt.Sprintf("%s=true", runtime.FeaturePortPolicyNone),
+			gs: GameServer{
+				Spec: GameServerSpec{
+					Ports: []GameServerPort{
+						{
+							Name:          "main",
+							ContainerPort: 7777,
+							PortPolicy:    None,
+						},
+					},
+					Container: "testing",
+					Lists:     map[string]ListStatus{},
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "testing", Image: "testing/image"}}},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1493,6 +1513,56 @@ func TestGameServerDisableServiceAccount(t *testing.T) {
 	err = gs.DisableServiceAccount(pod)
 	assert.NoError(t, err)
 	assert.Len(t, pod.Spec.Containers, 1)
+	assert.Len(t, pod.Spec.Containers[0].VolumeMounts, 1)
+	assert.Equal(t, "/var/run/secrets/kubernetes.io/serviceaccount", pod.Spec.Containers[0].VolumeMounts[0].MountPath)
+}
+
+func TestGameServerPassthroughPortAnnotation(t *testing.T) {
+	t.Parallel()
+	runtime.FeatureTestMutex.Lock()
+	defer runtime.FeatureTestMutex.Unlock()
+	require.NoError(t, runtime.ParseFeatures(string(runtime.FeatureAutopilotPassthroughPort)+"=true"))
+	containerOne := "containerOne"
+	containerTwo := "containerTwo"
+	containerThree := "containerThree"
+	containerFour := "containerFour"
+	gs := &GameServer{ObjectMeta: metav1.ObjectMeta{Name: "gameserver", UID: "1234"}, Spec: GameServerSpec{
+		Container: "containerOne",
+		Ports: []GameServerPort{
+			{Name: "defaultDynamicOne", PortPolicy: Dynamic, ContainerPort: 7659, Container: &containerOne},
+			{Name: "defaultPassthroughOne", PortPolicy: Passthrough, Container: &containerOne},
+			{Name: "defaultPassthroughTwo", PortPolicy: Passthrough, Container: &containerTwo},
+			{Name: "defaultDynamicTwo", PortPolicy: Dynamic, ContainerPort: 7654, Container: &containerTwo},
+			{Name: "defaultDynamicThree", PortPolicy: Dynamic, ContainerPort: 7660, Container: &containerThree},
+			{Name: "defaultDynamicThree", PortPolicy: Dynamic, ContainerPort: 7661, Container: &containerThree},
+			{Name: "defaultDynamicThree", PortPolicy: Dynamic, ContainerPort: 7662, Container: &containerThree},
+			{Name: "defaulPassthroughThree", PortPolicy: Passthrough, Container: &containerThree},
+			{Name: "defaultPassthroughFour", PortPolicy: Passthrough, Container: &containerFour},
+		},
+		Template: corev1.PodTemplateSpec{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{
+					{Name: "containerOne", Image: "container/image"},
+					{Name: "containerTwo", Image: "container/image"},
+					{Name: "containerThree", Image: "container/image"},
+					{Name: "containerFour", Image: "container/image"},
+				},
+			},
+		},
+	}}
+
+	passthroughContainerPortMap := "{\"containerFour\":[0],\"containerOne\":[1],\"containerThree\":[3],\"containerTwo\":[0]}"
+
+	gs.ApplyDefaults()
+	pod, err := gs.Pod(fakeAPIHooks{})
+	assert.NoError(t, err)
+	assert.Len(t, pod.Spec.Containers, 4)
+	assert.Empty(t, pod.Spec.Containers[0].VolumeMounts)
+	assert.Equal(t, pod.ObjectMeta.Annotations[PassthroughPortAssignmentAnnotation], passthroughContainerPortMap)
+
+	err = gs.DisableServiceAccount(pod)
+	assert.NoError(t, err)
+	assert.Len(t, pod.Spec.Containers, 4)
 	assert.Len(t, pod.Spec.Containers[0].VolumeMounts, 1)
 	assert.Equal(t, "/var/run/secrets/kubernetes.io/serviceaccount", pod.Spec.Containers[0].VolumeMounts[0].MountPath)
 }

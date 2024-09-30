@@ -20,7 +20,7 @@
 #   \__, |_| \_\_|    \____|   |_|\___/ \___/|_|_|_| |_|\__, |
 #   |___/                                               |___/
 
-grpc_release_tag = v1.57.1
+grpc_release_tag = v1.58.3
 
 build_sdk_base_version = $(call sha,$(build_path)/build-sdk-images/tool/base/Dockerfile)_$(grpc_release_tag)
 build_sdk_base_tag = agones-build-sdk-base:$(build_sdk_base_version)
@@ -165,7 +165,8 @@ run-sdk-conformance-test-cpp:
 	$(MAKE) run-sdk-conformance-test SDK_FOLDER=cpp GRPC_PORT=9003 HTTP_PORT=9103
 
 run-sdk-conformance-test-node:
-	$(MAKE) run-sdk-conformance-test SDK_FOLDER=node GRPC_PORT=9002 HTTP_PORT=9102
+	# run with on-by-default (Beta) feature flags enabled. If running locally first run `SDK_FOLDER=node make test-sdk` to build dependencies.
+	$(MAKE) run-sdk-conformance-test SDK_FOLDER=node GRPC_PORT=9002 HTTP_PORT=9102 TESTS=$(DEFAULT_CONFORMANCE_TESTS),$(COUNTS_AND_LISTS_TESTS)
 
 run-sdk-conformance-test-go:
 	# run with on-by-default (Beta) feature flags enabled

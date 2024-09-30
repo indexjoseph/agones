@@ -32,7 +32,7 @@ Documentation can be found on the [Agones website](https://agones.dev/site/docs/
 
 ## Get involved
 
-- [Slack](https://join.slack.com/t/agones/shared_invite/enQtMzE5NTE0NzkyOTk1LWU3ODAyZjdjMjNlYWIxZTAwODkxMGY3YWEyZjNjMjc4YWM1Zjk0OThlMGU2ZmUyMzRlMDljNDJiNmZlMGQ1M2U)
+- [Slack](https://join.slack.com/t/agones/shared_invite/zt-2mg1j7ddw-0QYA9IAvFFRKw51ZBK6mkQ)
 - [Twitter](https://twitter.com/agonesdev)
 - [Mailing List](https://groups.google.com/forum/#!forum/agones-discuss)
 - [Community Meetings](https://www.youtube.com/playlist?list=PLhkWKwFGACw2dFpdmwxOyUCzlGP2-n7uF) (Join the mailing
@@ -52,6 +52,8 @@ the [Project Security Policy](.github/SECURITY.md)
 Please read the [contributing](CONTRIBUTING.md) guide for directions on submitting Pull Requests to Agones, and community membership governance.
 
 See the [Developing, Testing and Building Agones](build/README.md) documentation for developing, testing and building Agones from source.
+
+For Agones client SDK development refer to [Developing, Testing, and Building Agones Client SDKs](sdks/README.md).
 
 The [Release Process](docs/governance/release_process.md) documentation displays the project's upcoming release calendar and release process.
 

@@ -20,13 +20,13 @@
 # Build Stage
 ARG WINDOWS_VERSION=ltsc2019
 
-FROM --platform=linux/amd64 golang:1.21.6 as builder
+FROM --platform=linux/amd64 golang:1.21.12 as builder
 WORKDIR /go/src
 COPY . agones.dev/agones
 
 WORKDIR /go/src/agones.dev/agones/examples/simple-game-server
 
-RUN GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o simple-game-server.exe main.go
+RUN GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o simple-game-server.exe *.go
 
 RUN ls -ltr /go/src/agones.dev/agones/examples/simple-game-server
 FROM mcr.microsoft.com/windows/servercore:${WINDOWS_VERSION}

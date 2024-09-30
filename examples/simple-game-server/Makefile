@@ -30,6 +30,7 @@ BUILDX_WINDOWS_BUILDER = windows-builder
 # For the full list of tags see https://hub.docker.com/_/microsoft-windows-servercore.
 # GKE-Windows version map: https://cloud.google.com/kubernetes-engine/docs/how-to/creating-a-cluster-windows#version_mapping
 WINDOWS_VERSIONS = ltsc2019 ltsc2022
+
 WINDOWS_DOCKER_PUSH_ARGS = # When pushing set to --push.
 # Build with Windows support
 WITH_WINDOWS ?= 1
@@ -38,7 +39,7 @@ WITH_ARM64 ?= 1
 
 mkfile_path := $(abspath $(lastword $(MAKEFILE_LIST)))
 project_path := $(dir $(mkfile_path))
-version := 0.32
+version := 0.34
 ifeq ($(REPOSITORY),)
 	server_tag := simple-game-server:$(version)
 else

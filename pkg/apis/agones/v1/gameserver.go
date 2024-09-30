@@ -156,6 +156,9 @@ const (
 	// NodePodIP identifies an IP address from a pod.
 	NodePodIP corev1.NodeAddressType = "PodIP"
 
+	// PassthroughPortAssignmentAnnotation is an annotation to keep track of game server container and its Passthrough ports indices
+	PassthroughPortAssignmentAnnotation = "agones.dev/container-passthrough-port-assignment"
+
 	// True is the string "true" to appease the goconst lint.
 	True = "true"
 	// False is the string "false" to appease the goconst lint.
@@ -525,6 +528,14 @@ func (gss *GameServerSpec) validateFeatureGates(fldPath *field.Path) field.Error
 		}
 	}
 
+	if !runtime.FeatureEnabled(runtime.FeaturePortPolicyNone) {
+		for i, p := range gss.Ports {
+			if p.PortPolicy == None {
+				allErrs = append(allErrs, field.Forbidden(fldPath.Child("ports").Index(i).Child("portPolicy"), fmt.Sprintf("Value cannot be set to %s unless feature flag %s is enabled", None, runtime.FeaturePortPolicyNone)))
+			}
+		}
+	}
+
 	return allErrs
 }
 
@@ -712,13 +723,6 @@ func (gss *GameServerSpec) FindContainer(name string) (int, corev1.Container, er
 	return -1, corev1.Container{}, errors.Errorf("Could not find a container named %s", name)
 }
 
-// FindGameServerContainer returns the container that is specified in
-// gameServer.Spec.Container. Returns the index and the value.
-// Returns an error if not found
-func (gs *GameServer) FindGameServerContainer() (int, corev1.Container, error) {
-	return gs.Spec.FindContainer(gs.Spec.Container)
-}
-
 // ApplyToPodContainer applies func(v1.Container) to the specified container in the pod.
 // Returns an error if the container is not found.
 func (gs *GameServer) ApplyToPodContainer(pod *corev1.Pod, containerName string, f func(corev1.Container) corev1.Container) error {
@@ -745,8 +749,11 @@ func (gs *GameServer) Pod(apiHooks APIHooks, sidecars ...corev1.Container) (*cor
 	}
 
 	gs.podObjectMeta(pod)
+
+	passthroughContainerPortMap := make(map[string][]int)
 	for _, p := range gs.Spec.Ports {
 		var hostPort int32
+		portIdx := 0
 
 		if !runtime.FeatureEnabled(runtime.FeaturePortPolicyNone) || p.PortPolicy != None {
 			hostPort = p.HostPort
@@ -758,6 +765,7 @@ func (gs *GameServer) Pod(apiHooks APIHooks, sidecars ...corev1.Container) (*cor
 			Protocol:      p.Protocol,
 		}
 		err := gs.ApplyToPodContainer(pod, *p.Container, func(c corev1.Container) corev1.Container {
+			portIdx = len(c.Ports)
 			c.Ports = append(c.Ports, cp)
 
 			return c
@@ -765,7 +773,19 @@ func (gs *GameServer) Pod(apiHooks APIHooks, sidecars ...corev1.Container) (*cor
 		if err != nil {
 			return nil, err
 		}
+		if runtime.FeatureEnabled(runtime.FeatureAutopilotPassthroughPort) && p.PortPolicy == Passthrough {
+			passthroughContainerPortMap[*p.Container] = append(passthroughContainerPortMap[*p.Container], portIdx)
+		}
 	}
+
+	if len(passthroughContainerPortMap) != 0 {
+		containerToPassthroughMapJSON, err := json.Marshal(passthroughContainerPortMap)
+		if err != nil {
+			return nil, err
+		}
+		pod.ObjectMeta.Annotations[PassthroughPortAssignmentAnnotation] = string(containerToPassthroughMapJSON)
+	}
+
 	// Put the sidecars at the start of the list of containers so that the kubelet starts them first.
 	containers := make([]corev1.Container, 0, len(sidecars)+len(pod.Spec.Containers))
 	containers = append(containers, sidecars...)
